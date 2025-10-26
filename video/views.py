@@ -188,29 +188,41 @@ class PostShuffledListAPIView(APIView):
     def get(self, request):
         # try:
         value = request.query_params.get('value')
+        print(f"DEBUG PostShuffledListAPIView: value={value}, today={today}")
         split_value = value.split('-')
         if split_value[0] == "COMP":
             competition_id = int(split_value[1])
-            participants_video = Participant.objects.filter(competition=competition_id,
-                                                            competition__start_date__lte=today,
-                                                            competition__end_date__gte=today).order_by('?')
+            participants_video = Participant.objects.filter(
+                competition=competition_id,
+                competition__start_date__lte=today,
+                competition__end_date__gte=today,
+                is_paid=True,  # Only show videos from paid participants
+                video__isnull=False  # Only show participants with videos
+            ).exclude(video="").order_by('?')
         elif split_value[0] == "TOUR":
             tournament_id = split_value[1]
-            participants_video = Participant.objects.filter(tournament=tournament_id,
-                                                            competition__start_date__lte=today,
-                                                            competition__end_date__gte=today).order_by('?')
+            participants_video = Participant.objects.filter(
+                tournament=tournament_id,
+                competition__start_date__lte=today,
+                competition__end_date__gte=today,
+                is_paid=True,  # Only show videos from paid participants
+                video__isnull=False  # Only show participants with videos
+            ).exclude(video="").order_by('?')
         elif split_value[0] == "ALL":
             participants_video = Participant.objects.filter(
                 competition__isnull=False,
                 competition__start_date__lte=today,
-                competition__end_date__gte=today
-            ).order_by('?')
+                competition__end_date__gte=today,
+                is_paid=True,  # Only show videos from paid participants
+                video__isnull=False  # Only show participants with videos
+            ).exclude(video="").order_by('?')
 
         else:
             return Response({'detail': 'query params not found'}, status=status.HTTP_404_NOT_FOUND)
 
+        print(f"DEBUG PostShuffledListAPIView: Found {participants_video.count()} participants")
         serializer = ParticipantSerializer(participants_video, many=True, context={'user_id': request.user.id})
-        print(serializer.data, '---------------------------')
+        print(f"DEBUG PostShuffledListAPIView: Serialized {len(serializer.data)} items")
         return Response(serializer.data, status=status.HTTP_200_OK)
     # except Exception as err:
     #     print('Error:', err)
