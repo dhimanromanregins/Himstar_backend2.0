@@ -430,6 +430,235 @@ class RemoveTempVideo(APIView):
         return Response(status=status.HTTP_200_OK)
 
 
+class DeleteParticipantAPIView(APIView):
+    """
+    Delete Participant API
+    
+    Deletes the authenticated user's participation from a specific competition.
+    Also cleans up associated video files.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Delete authenticated user's participation from a competition",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['competition_id'],
+            properties={
+                'competition_id': openapi.Schema(
+                    type=openapi.TYPE_INTEGER,
+                    description='ID of the competition to remove participation from'
+                ),
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Participant deleted successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(type=openapi.TYPE_STRING, description='Success message'),
+                        'deleted_participant': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'competition_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'username': openapi.Schema(type=openapi.TYPE_STRING)
+                            }
+                        )
+                    }
+                )
+            ),
+            400: openapi.Response(description="Missing competition_id parameter"),
+            404: openapi.Response(description="Participant, competition, or user registration not found")
+        },
+        tags=['Participants']
+    )
+    def delete(self, request):
+        competition_id = request.data.get('competition_id')
+        
+        # Validate required parameter
+        if not competition_id:
+            return Response(
+                {"error": "competition_id is required."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get the competition
+            competition = Competition.objects.get(id=competition_id)
+        except Competition.DoesNotExist:
+            return Response(
+                {"error": "Competition not found."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get current user's register instance (user ID from token)
+        current_register = Register.objects.filter(user=request.user).first()
+        if not current_register:
+            return Response(
+                {"error": "User registration not found."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            # Find the participant for the authenticated user
+            participant = Participant.objects.get(
+                competition=competition, 
+                user=current_register
+            )
+        except Participant.DoesNotExist:
+            return Response(
+                {"error": "You are not participating in this competition."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Store participant info before deletion
+        participant_info = {
+            'id': participant.id,
+            'competition_id': competition.id,
+            'username': current_register.user.username
+        }
+        
+        # Clean up video files before deletion
+        try:
+            participant.cleanup_video_files()
+        except Exception as e:
+            print(f"Error during video cleanup: {e}")
+            # Continue with deletion even if cleanup fails
+        
+        # Delete the participant
+        participant.delete()
+        
+        return Response({
+            "message": "Your participation has been removed successfully.",
+            "deleted_participant": participant_info
+        }, status=status.HTTP_200_OK)
+
+
+class CompetitionDetailForUserAPIView(APIView):
+    """
+    Competition Detail API for Authenticated User
+    
+    Gets competition details along with the authenticated user's participation status.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Get competition details with user participation status",
+        manual_parameters=[
+            openapi.Parameter(
+                'competition_id',
+                openapi.IN_PATH,
+                description="Competition ID",
+                type=openapi.TYPE_INTEGER,
+                required=True
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="Competition details with user participation info",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'competition': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            description='Competition details'
+                        ),
+                        'user_participation': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'is_participating': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                                'participant_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'is_paid': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                                'has_video': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                                'video_url': openapi.Schema(type=openapi.TYPE_STRING),
+                                'submission_date': openapi.Schema(type=openapi.TYPE_STRING)
+                            }
+                        ),
+                        'statistics': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'total_participants': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'paid_participants': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'remaining_slots': openapi.Schema(type=openapi.TYPE_INTEGER)
+                            }
+                        )
+                    }
+                )
+            ),
+            404: openapi.Response(description="Competition not found")
+        },
+        tags=['Competitions']
+    )
+    def get(self, request, competition_id):
+        try:
+            # Get the competition
+            competition = Competition.objects.get(id=competition_id)
+        except Competition.DoesNotExist:
+            return Response(
+                {"error": "Competition not found."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get current user's register instance
+        current_register = Register.objects.filter(user=request.user).first()
+        if not current_register:
+            return Response(
+                {"error": "User registration not found."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get user's participation details
+        participant = Participant.objects.filter(
+            competition=competition, 
+            user=current_register
+        ).first()
+        
+        # Serialize competition data with user context
+        from dashboard.serializers import CompetitionSerializer
+        competition_serializer = CompetitionSerializer(
+            competition, 
+            context={'user_id': request.user.id}
+        )
+        
+        # Prepare user participation data
+        user_participation = {
+            'is_participating': bool(participant),
+            'participant_id': participant.id if participant else None,
+            'is_paid': participant.is_paid if participant else False,
+            'has_video': bool(participant and (participant.video or participant.temp_video)) if participant else False,
+            'video_url': None,
+            'submission_date': None
+        }
+        
+        if participant:
+            # Get video URL
+            if participant.video:
+                user_participation['video_url'] = participant.video.url
+            elif participant.file_uri:
+                user_participation['video_url'] = participant.file_uri
+            
+            # Get submission date (when participant was created/last updated)
+            user_participation['submission_date'] = participant.updated_at or participant.created_at if hasattr(participant, 'updated_at') else None
+        
+        # Get competition statistics
+        all_participants = Participant.objects.filter(competition=competition)
+        paid_participants = all_participants.filter(is_paid=True)
+        
+        statistics = {
+            'total_participants': all_participants.count(),
+            'paid_participants': paid_participants.count(),
+            'remaining_slots': max(0, competition.max_participants - paid_participants.count()) if competition.max_participants else None
+        }
+        
+        return Response({
+            'competition': competition_serializer.data,
+            'user_participation': user_participation,
+            'statistics': statistics
+        }, status=status.HTTP_200_OK)
+
+
 def compressVideo(video_path, output_path):
     print('Input:', video_path, 'Output:', output_path)
     command = [
@@ -471,8 +700,33 @@ class ParticipantTempSave(APIView):
             return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         print("DEBUG: User registration found")
-        # Create or get the participant entry
-        participant, _ = Participant.objects.get_or_create(competition=competition, user=register)
+        
+        # Check if user is already a participant in this competition
+        existing_participant = Participant.objects.filter(competition=competition, user=register).first()
+        
+        if existing_participant:
+            # If participant exists and has already paid, don't allow new upload
+            if existing_participant.is_paid:
+                return Response({
+                    "error": "You are already enrolled in this competition."
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # If participant exists but hasn't paid, delete the old entry
+            print(f"DEBUG: Deleting existing unpaid participant {existing_participant.id}")
+            try:
+                # Clean up old video files before deletion
+                existing_participant.cleanup_video_files()
+                existing_participant.delete()
+                print("DEBUG: Old unpaid participant entry deleted successfully")
+            except Exception as e:
+                print(f"DEBUG: Error deleting old participant: {e}")
+                return Response({
+                    "error": "Error removing previous entry. Please try again."
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Create new participant entry
+        participant = Participant.objects.create(competition=competition, user=register)
+        print(f"DEBUG: New participant created with ID: {participant.id}")
 
         # Compress the video if it's larger than 15MB (stored in local storage temporarily)
         temp_path = default_storage.save(f"competition_participants_videos/{request.user.username}_{uuid.uuid4().hex}.{video.name.split('.')[-1]}", video)

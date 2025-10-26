@@ -51,7 +51,8 @@ class CompetitionSerializer(serializers.ModelSerializer):
         representation['end_date_formatted'] = localtime(instance.end_date).strftime(
             "%B %d, %Y at %I:%M %p") if instance.end_date else None
 
-        if instance.stage.likes_required <= likes:
+        # Check if stage exists and has likes_required attribute
+        if instance.stage and hasattr(instance.stage, 'likes_required') and instance.stage.likes_required <= likes:
             representation['can_participate'] = True
         else:
             representation['can_participate'] = False
@@ -80,7 +81,12 @@ class CompetitionSerializer(serializers.ModelSerializer):
         representation['end_date'] = localtime(instance.end_date).strftime(
             "%Y-%m-%d %H:%M:%S") if instance.end_date else None
         representation['max_participants'] = instance.max_participants
-
+        
+        # Check if user has paid for this competition
+        representation['user_has_paid'] = bool(is_participated and is_participated.is_paid) if is_participated else False
+        
+        # Check if competition requires payment
+        representation['is_paid_competition'] = bool(instance.price and instance.price > 0)
 
         media_files = CompetitionMedia.objects.filter(competition=instance)
         files = []
@@ -127,9 +133,15 @@ class TournamentSerializer(serializers.ModelSerializer):
                 end_date__gte=now()
             ).first()
         is_participated = Participant.objects.filter(competition=current_competition, user=register).first()
-        participants = Participant.objects.filter(competition=current_competition)
-        current_competition_serailzer = CompetitionSerializer(current_competition)
-        current_competition_data = current_competition_serailzer.data
+        participants = Participant.objects.filter(competition=current_competition) if current_competition else Participant.objects.none()
+        
+        # Initialize serializer only if current_competition exists
+        if current_competition:
+            current_competition_serailzer = CompetitionSerializer(current_competition)
+            current_competition_data = current_competition_serailzer.data
+        else:
+            current_competition_data = {}
+            
         payment = PaymentDetails.objects.filter(user=register, tournament=instance).first()
         representation['category'] = instance.category.name
         representation['tour_id'] = instance.id
@@ -150,13 +162,22 @@ class TournamentSerializer(serializers.ModelSerializer):
             representation['temp_video'] = is_participated.temp_video.url
         representation['is_close'] = instance.end_date < now()
         representation['is_done'] = True if is_participated and ((is_participated.file_uri or (is_participated.video and 'media' in is_participated.video.url)) and is_participated.is_paid) else False
-        representation['reg_open'] = current_competition.registration_open_date <= current_time and current_competition.registration_close_date >= current_time
-        representation['reg_close'] = current_competition.registration_close_date < now()
-        representation['remaining_slots'] = instance.max_participants - participants.filter(is_paid=True).count()
+        
+        # Check if current_competition exists before accessing its attributes
+        if current_competition:
+            representation['reg_open'] = current_competition.registration_open_date <= current_time and current_competition.registration_close_date >= current_time
+            representation['reg_close'] = current_competition.registration_close_date < now()
+        else:
+            representation['reg_open'] = False
+            representation['reg_close'] = True
+        representation['remaining_slots'] = (instance.max_participants - participants.filter(is_paid=True).count()) if instance.max_participants and current_competition else 0
         representation['is_paid'] = True if payment else False
-        representation['competition'] = current_competition_serailzer.data
+        representation['competition'] = current_competition_data
         representation['rules'] = instance.rules.split('\n') if instance.rules else instance.rules
-        media_files = CompetitionMedia.objects.filter(competition=current_competition_data.get('id', None))
+        
+        # Get media files only if current_competition_data has an id
+        competition_id = current_competition_data.get('id') if current_competition_data else None
+        media_files = CompetitionMedia.objects.filter(competition=competition_id) if competition_id else CompetitionMedia.objects.none()
         representation['registration_open_date'] = localtime(instance.registration_open_date).strftime(
             "%Y-%m-%d %H:%M:%S") if instance.registration_open_date else None
         representation['registration_close_date'] = localtime(instance.registration_close_date).strftime(
