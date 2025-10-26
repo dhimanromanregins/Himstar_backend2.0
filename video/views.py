@@ -714,8 +714,16 @@ class ParticipantTempSave(APIView):
             # If participant exists but hasn't paid, delete the old entry
             print(f"DEBUG: Deleting existing unpaid participant {existing_participant.id}")
             try:
-                # Clean up old video files before deletion
-                existing_participant.cleanup_video_files()
+                # Clean up old video files before deletion if method exists
+                if hasattr(existing_participant, 'cleanup_video_files') and callable(existing_participant.cleanup_video_files):
+                    try:
+                        existing_participant.cleanup_video_files()
+                    except Exception as cleanup_err:
+                        # Log cleanup error but continue to attempt deletion
+                        print(f"DEBUG: cleanup_video_files failed: {cleanup_err}")
+                else:
+                    print("DEBUG: cleanup_video_files method not found on Participant instance; skipping cleanup")
+
                 existing_participant.delete()
                 print("DEBUG: Old unpaid participant entry deleted successfully")
             except Exception as e:
