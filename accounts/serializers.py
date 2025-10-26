@@ -153,10 +153,15 @@ class OTPVerifySerializer(serializers.Serializer):
         user_data = self.context['user_data']
 
         # Create the user
+        # Handle full name splitting safely
+        name_parts = user_data['fullName'].strip().split(' ')
+        first_name = name_parts[0] if name_parts else ''
+        last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+        
         user = User.objects.create_user(
             username=user_data['username'],
-            first_name=user_data['fullName'].split(' ')[0],
-            last_name=user_data['fullName'].split(' ')[1],
+            first_name=first_name,
+            last_name=last_name,
             email=email,
             password=user_data['password']
         )
