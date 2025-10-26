@@ -263,16 +263,59 @@ class StartedTournamentsByCategoryView(APIView):
     def get(self, request):
         user_id = request.user.id
         category_id = request.GET.get('category_id')
+        
+        # Debug: Check current time and all tournaments
+        current_time = now()
+        print(f"DEBUG StartedTournaments: Current time = {current_time}")
+        
+        # Check all tournaments first
+        all_tournaments = Tournament.objects.all()
+        print(f"DEBUG StartedTournaments: Total tournaments in DB = {all_tournaments.count()}")
+        
+        # Check active tournaments
+        active_tournaments = Tournament.objects.filter(is_active=True)
+        print(f"DEBUG StartedTournaments: Active tournaments = {active_tournaments.count()}")
+        
+        # Check tournaments with start dates
+        started_tournaments = Tournament.objects.filter(
+            is_active=True,
+            start_date__lte=current_time
+        )
+        print(f"DEBUG StartedTournaments: Started tournaments = {started_tournaments.count()}")
+        
+        # Final filter
         tournaments = Tournament.objects.filter(
             is_active=True,
-            start_date__lte=now(),
-            end_date__gte=now(),
+            start_date__lte=current_time,
+            end_date__gte=current_time,
         )
+        print(f"DEBUG StartedTournaments: Started and not ended tournaments = {tournaments.count()}")
+        
+        # Print tournament details
+        for t in tournaments:
+            print(f"DEBUG Tournament: {t.name} | Start: {t.start_date} | End: {t.end_date} | Active: {t.is_active}")
+        
         if category_id:
             category = get_object_or_404(Category, id=category_id)
             tournaments = tournaments.filter(category=category)
+            print(f"DEBUG StartedTournaments: After category filter = {tournaments.count()}")
+            
         serializer = TournamentSerializer(tournaments, many=True, context={'user_id': user_id})
-        print('serializer>>>>', serializer.data)
+        print(f"DEBUG StartedTournaments: Serialized data count = {len(serializer.data)}")
+        
+        # Alternative: Try without strict date filtering to see if tournaments exist
+        if tournaments.count() == 0:
+            print("DEBUG: No tournaments found with current filters, trying looser filters...")
+            
+            # Just active tournaments
+            alternative_tournaments = Tournament.objects.filter(is_active=True)
+            if category_id:
+                alternative_tournaments = alternative_tournaments.filter(category=category)
+            print(f"DEBUG Alternative: Active tournaments (no date filter) = {alternative_tournaments.count()}")
+            
+            for t in alternative_tournaments:
+                print(f"DEBUG Alt Tournament: {t.name} | Start: {t.start_date} | End: {t.end_date} | RegOpen: {t.registration_open_date} | RegClose: {t.registration_close_date}")
+        
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 class TournamentsByCategoryView(APIView):
