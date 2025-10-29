@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-l)8p-)k^)6bn&5+@o9=)lfvltck6sm!3-u&q+32uw*v78hq*)g
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['himstars.com', '192.168.1.4']
+ALLOWED_HOSTS = ['himstar.co.in', '192.168.1.3', '192.168.1.4']
 
 
 # Application definition
@@ -201,8 +201,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'Sahildhiman98765@gmail.com'
-EMAIL_HOST_PASSWORD = 'hrdrpqtvptxdtwll'
+EMAIL_HOST_USER = 'himstar98@gmail.com'
+EMAIL_HOST_PASSWORD = 'lqedaxcennylorfs'
 
 
 # Azure Details

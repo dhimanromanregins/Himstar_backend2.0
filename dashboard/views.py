@@ -245,17 +245,20 @@ class CompetitionsByCategoryView(APIView):
 
 class MyCompetitions(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        username = request.GET.get('username')
+        # Get the authenticated user from the token
+        user = request.user
 
-        if username:
-            register = Register.objects.filter(user__username=username).first()
-        else:
-            register = Register.objects.filter(user=request.user.id).first()
+        # Fetch the Register object for the authenticated user
+        register = Register.objects.filter(user=user).first()
 
+        # Fetch competitions where the user is a participant
         participants = Participant.objects.filter(user=register).values_list('competition', flat=True)
         competitions = Competition.objects.filter(id__in=participants)
-        serializer = CompetitionSerializer(competitions, many=True, context={'user_id': request.user.id})
+
+        # Serialize the competitions data
+        serializer = CompetitionSerializer(competitions, many=True, context={'user_id': user.id})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 class StartedTournamentsByCategoryView(APIView):
