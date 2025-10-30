@@ -52,10 +52,14 @@ class CompetitionSerializer(serializers.ModelSerializer):
             "%B %d, %Y at %I:%M %p") if instance.end_date else None
 
         # Check if stage exists and has likes_required attribute
-        if instance.stage and hasattr(instance.stage, 'likes_required') and instance.stage.likes_required <= likes:
-            representation['can_participate'] = True
+        if instance.stage and hasattr(instance.stage, 'likes_required'):
+            if instance.stage.likes_required <= likes:
+                representation['can_participate'] = True
+            else:
+                representation['can_participate'] = False
         else:
-            representation['can_participate'] = False
+            # If likes_required is not set, allow participation
+            representation['can_participate'] = True
         representation['category'] = instance.category.name if instance.category else None
         representation['rules'] = instance.rules.split('\n') if instance.rules else instance.rules
         representation['is_participated'] = True if is_participated else False
@@ -172,6 +176,10 @@ class TournamentSerializer(serializers.ModelSerializer):
             representation['reg_close'] = True
         representation['remaining_slots'] = (instance.max_participants - participants.filter(is_paid=True).count()) if instance.max_participants and current_competition else 0
         representation['is_paid'] = True if payment else False
+        
+        # Check if user has paid for this tournament (same logic as competition)
+        representation['user_has_paid'] = bool(is_participated and is_participated.is_paid) if is_participated else False
+        
         representation['competition'] = current_competition_data
         representation['rules'] = instance.rules.split('\n') if instance.rules else instance.rules
         
@@ -207,8 +215,6 @@ class TournamentSerializer(serializers.ModelSerializer):
         representation['media_files'] = files
         return representation
 
-
-        return representation
 
 # class MyCompetitionSerializer(serializers.ModelSerializer):
 #     class Meta:
