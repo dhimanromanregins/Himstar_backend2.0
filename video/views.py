@@ -704,11 +704,21 @@ class ParticipantTempSave(APIView):
         competition_id = request.data.get('competition')
         video = request.FILES.get('video')
         print("DEBUG: Starting ParticipantTempSave post method")
-        if not video or not competition_id:
-            return Response({"error": "Video file and competition ID are required."},
-                            status=status.HTTP_400_BAD_REQUEST)
+        print(f"DEBUG: competition_id = {competition_id}, video = {video}")
+        
+        if not video:
+            print("DEBUG: No video file provided")
+            return Response({"error": "Video file is required."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not competition_id:
+            print("DEBUG: No competition_id provided")
+            return Response({"error": "Competition ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+            
         print("DEBUG: Video and competition_id validated")
+        print(f"DEBUG: Video size = {video.size} bytes")
+        
         if video.size > 40 * 1024 * 1024:
+            print("DEBUG: Video file too large")
             return Response({"error": "Video file must be 40MB or less."}, status=status.HTTP_400_BAD_REQUEST)
 
         print("DEBUG: Video size validation passed")
@@ -757,43 +767,57 @@ class ParticipantTempSave(APIView):
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         # Create new participant entry
-        participant = Participant.objects.create(competition=competition, user=register)
-        print(f"DEBUG: New participant created with ID: {participant.id}")
+        try:
+            participant = Participant.objects.create(competition=competition, user=register)
+            print(f"DEBUG: New participant created with ID: {participant.id}")
+        except Exception as e:
+            print(f"DEBUG: Error creating participant: {e}")
+            return Response({'detail': 'Error creating participant entry.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Compress the video if it's larger than 15MB (stored in local storage temporarily)
-        temp_path = default_storage.save(f"competition_participants_videos/{request.user.username}_{uuid.uuid4().hex}.{video.name.split('.')[-1]}", video)
-        compress_input_path = os.path.join(settings.MEDIA_ROOT, temp_path)
+        try:
+            # Compress the video if it's larger than 15MB (stored in local storage temporarily)
+            temp_path = default_storage.save(f"competition_participants_videos/{request.user.username}_{uuid.uuid4().hex}.{video.name.split('.')[-1]}", video)
+            compress_input_path = os.path.join(settings.MEDIA_ROOT, temp_path)
+            print(f"DEBUG: Video saved temporarily at: {temp_path}")
 
-        # Only compress if video is larger than 15MB
-        if video.size > 15 * 1024 * 1024:
-            output_path = os.path.join(settings.MEDIA_ROOT, "competition_participants_videos",
-                                        f"{uuid.uuid4().hex}.{video.name.split('.')[-1]}")
-            compress_status = compressVideo(compress_input_path, output_path)
-            if not compress_status:
-                return Response({'detail': 'Something went wrong during compression.'}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # Use original file if it's small enough
-            output_path = compress_input_path
+            # Only compress if video is larger than 15MB
+            if video.size > 15 * 1024 * 1024:
+                output_path = os.path.join(settings.MEDIA_ROOT, "competition_participants_videos",
+                                            f"{uuid.uuid4().hex}.{video.name.split('.')[-1]}")
+                print(f"DEBUG: Starting compression for large video")
+                compress_status = compressVideo(compress_input_path, output_path)
+                if not compress_status:
+                    print("DEBUG: Compression failed")
+                    return Response({'detail': 'Something went wrong during compression.'}, status=status.HTTP_400_BAD_REQUEST)
+                print("DEBUG: Compression completed successfully")
+            else:
+                # Use original file if it's small enough
+                output_path = compress_input_path
+                print("DEBUG: Using original file (small size)")
+        except Exception as e:
+            print(f"DEBUG: Error during video processing: {e}")
+            return Response({'detail': 'Error processing video file.'}, status=status.HTTP_400_BAD_REQUEST)
         # else:
         #     output_path = compress_input_path
 
-        # Upload the compressed video to Azure Blob Storage
-        # azure_video_path = f"competition_participants_videos/{uuid.uuid4().hex}.{video.name.split('.')[-1]}"
-        # upload_video_to_azure(output_path, azure_video_path)
-        # with open(output_path, "rb") as f:
-        #     azure_storage = AzureMediaStorage()
-        #     azure_storage.save(azure_video_path, f)
+        try:
+            # Save the processed video to participant
+            print(f"DEBUG: Saving video to participant from: {output_path}")
+            with open(output_path, 'rb') as f:
+                django_file = File(f)
+                participant.temp_video.save(os.path.basename(output_path), django_file, save=True)
 
-        # participant.file_uri = f"{settings.AZURE_FRONT_DOOR_DOMAIN}/{azure_video_path}"
+            participant.save()
+            print("DEBUG: Participant saved successfully")
 
-        with open(output_path, 'rb') as f:
-            django_file = File(f)
-            participant.temp_video.save(os.path.basename(output_path), django_file, save=True)
-
-        # participant.temp_video = temp_path
-        participant.save()
-
-        return Response({
-            "message": "Video uploaded successfully",
-            "file_uri": participant.file_uri
-        }, status=status.HTTP_200_OK)
+            return Response({
+                "message": "Video uploaded successfully",
+                "file_uri": participant.file_uri
+            }, status=status.HTTP_200_OK)
+            
+        except FileNotFoundError as e:
+            print(f"DEBUG: Video file not found: {e}")
+            return Response({'detail': 'Processed video file not found.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            print(f"DEBUG: Error saving participant video: {e}")
+            return Response({'detail': 'Error saving video to participant.'}, status=status.HTTP_400_BAD_REQUEST)
