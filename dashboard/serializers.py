@@ -51,9 +51,10 @@ class CompetitionSerializer(serializers.ModelSerializer):
         representation['end_date_formatted'] = localtime(instance.end_date).strftime(
             "%B %d, %Y at %I:%M %p") if instance.end_date else None
 
-        # Check if stage exists and has likes_required attribute
+        # Check if stage exists and has likes_required attribute - use votes instead of likes
         if instance.stage and hasattr(instance.stage, 'likes_required'):
-            if instance.stage.likes_required <= likes:
+            user_votes = register.votes if register else 0
+            if instance.stage.likes_required <= user_votes:
                 representation['can_participate'] = True
             else:
                 representation['can_participate'] = False
