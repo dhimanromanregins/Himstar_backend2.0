@@ -674,15 +674,27 @@ class CompetitionDetailForUserAPIView(APIView):
 def compressVideo(video_path, output_path):
     print('Input:', video_path, 'Output:', output_path)
     command = [
-        'ffmpeg', '-i', video_path, '-vcodec', 'libx264', '-crf', str(28), '-preset', 'slow', output_path
+        'ffmpeg', '-i', video_path, 
+        '-vcodec', 'libx264', 
+        '-crf', '28', 
+        '-preset', 'fast',  # Changed from 'slow' to 'fast' for quicker processing
+        '-movflags', '+faststart',  # Optimize for streaming
+        '-y',  # Overwrite output file if exists
+        output_path
     ]
     try:
-        subprocess.run(command, check=True)
+        # Add timeout to prevent hanging
+        subprocess.run(command, check=True, timeout=120)  # 2-minute timeout
         return True
+    except subprocess.TimeoutExpired:
+        print('Compression timeout - taking too long')
+        return False
     except subprocess.CalledProcessError as err:
         print('1Compress Error:', err)
+        return False
     except Exception as err:
         print('2Compress Error:', err)
+        return False
 
 
 class ParticipantTempSave(APIView):
@@ -752,12 +764,16 @@ class ParticipantTempSave(APIView):
         temp_path = default_storage.save(f"competition_participants_videos/{request.user.username}_{uuid.uuid4().hex}.{video.name.split('.')[-1]}", video)
         compress_input_path = os.path.join(settings.MEDIA_ROOT, temp_path)
 
-        # if video.size > 15 * 1024 * 1024:
-        output_path = os.path.join(settings.MEDIA_ROOT, "competition_participants_videos",
-                                    f"{uuid.uuid4().hex}.{video.name.split('.')[-1]}")
-        compress_status = compressVideo(compress_input_path, output_path)
-        if not compress_status:
-            return Response({'detail': 'Something went wrong during compression.'}, status=status.HTTP_400_BAD_REQUEST)
+        # Only compress if video is larger than 15MB
+        if video.size > 15 * 1024 * 1024:
+            output_path = os.path.join(settings.MEDIA_ROOT, "competition_participants_videos",
+                                        f"{uuid.uuid4().hex}.{video.name.split('.')[-1]}")
+            compress_status = compressVideo(compress_input_path, output_path)
+            if not compress_status:
+                return Response({'detail': 'Something went wrong during compression.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Use original file if it's small enough
+            output_path = compress_input_path
         # else:
         #     output_path = compress_input_path
 
