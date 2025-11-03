@@ -700,7 +700,6 @@ class ProductionMediaCheckAPIView(APIView):
     """
     Check production media directory permissions and setup
     """
-    permission_classes = [IsAuthenticated]
     
     def get(self, request):
         """Check production environment media setup"""
