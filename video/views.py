@@ -300,13 +300,20 @@ class LikeAPIView(APIView):
         post = get_object_or_404(Participant, id=post_id)
         user_register = get_object_or_404(Register, user=user_id)
         like, created = Like.objects.get_or_create(user=user_register, post=post)
+        
+        # Get the video owner (the person who posted the video)
+        video_owner = post.user  # This is the Register object of the video owner
+        
         if not created:
+            # Unlike: Remove the like and decrease video owner's votes
             like.delete()
-            user_register.votes = max(user_register.votes - 1, 0)
-            user_register.save()
+            video_owner.votes = max(video_owner.votes - 1, 0)
+            video_owner.save()
             return Response({"message": "Post unliked"}, status=status.HTTP_200_OK)
-        user_register.votes += 1
-        user_register.save()
+        
+        # Like: Add the like and increase video owner's votes
+        video_owner.votes += 1
+        video_owner.save()
         return Response({"message": "Post liked"}, status=status.HTTP_200_OK)
 
 
@@ -1017,6 +1024,9 @@ class ActiveCompetitionVideosAPIView(APIView):
         tags=['Videos']
     )
     def get(self, request):
+        from django.utils import timezone
+        today = timezone.now()
+        
         # Get query parameters
         shuffle = request.query_params.get('shuffle', 'true').lower() == 'true'
         paid_only = request.query_params.get('paid_only', 'true').lower() == 'true'
