@@ -137,10 +137,62 @@ class ParticipantDetailView(APIView):
         participant = Participant.objects.filter(competition=competition_id, user=register).first()
         if not participant:
             return Response({'detail': 'Participant not found.'}, status=status.HTTP_404_NOT_FOUND)
-        participant.video = participant.temp_video
-        participant.temp_video = None
-        participant.is_paid = True
-        participant.save()
+        
+        # Properly move the temp video to main video field
+        if participant.temp_video:
+            try:
+                # Get the temp video file
+                temp_file = participant.temp_video
+                temp_path = temp_file.path if temp_file else None
+                
+                print(f"DEBUG PATCH: Moving temp video from: {temp_path}")
+                print(f"DEBUG PATCH: Temp file exists: {os.path.exists(temp_path) if temp_path else False}")
+                
+                if temp_path and os.path.exists(temp_path):
+                    # Read the temp file content
+                    with open(temp_path, 'rb') as f:
+                        django_file = File(f)
+                        
+                        # Generate new filename for main video
+                        original_name = os.path.basename(temp_path)
+                        new_name = f"main_{original_name}"
+                        
+                        # Save to main video field
+                        participant.video.save(new_name, django_file, save=False)
+                        print(f"DEBUG PATCH: Saved to main video: {participant.video}")
+                    
+                    # Clear temp video reference
+                    participant.temp_video = None
+                    
+                    # Set payment status and save
+                    participant.is_paid = True
+                    participant.save()
+                    
+                    print(f"DEBUG PATCH: Participant saved, main video: {participant.video}")
+                    
+                    # Clean up the temp file after successful move
+                    try:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                            print(f"DEBUG PATCH: Cleaned up temp file: {temp_path}")
+                    except Exception as cleanup_err:
+                        print(f"DEBUG PATCH: Error cleaning temp file: {cleanup_err}")
+                    
+                else:
+                    return Response({
+                        'detail': 'Temp video file not found on filesystem.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+            except Exception as e:
+                print(f"DEBUG PATCH: Error moving video: {e}")
+                return Response({
+                    'detail': f'Error processing video: {str(e)}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        else:
+            # No temp video, just update payment status
+            participant.is_paid = True
+            participant.save()
+        
         return Response(status=status.HTTP_200_OK)
 
     def delete(self, request, pk):
@@ -546,6 +598,102 @@ class DeleteParticipantAPIView(APIView):
             "message": "Your participation has been removed successfully.",
             "deleted_participant": participant_info
         }, status=status.HTTP_200_OK)
+
+
+class RecoverParticipantVideosAPIView(APIView):
+    """
+    Recovery API to fix participants with missing video files
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        """Attempt to recover missing video files for participants"""
+        try:
+            recovery_results = {
+                'total_participants': 0,
+                'participants_with_missing_files': 0,
+                'recovery_attempts': 0,
+                'successful_recoveries': 0,
+                'failed_recoveries': 0,
+                'details': []
+            }
+            
+            # Find all participants
+            all_participants = Participant.objects.all()
+            recovery_results['total_participants'] = all_participants.count()
+            
+            media_dir = os.path.join(settings.MEDIA_ROOT, 'competition_participants_videos')
+            
+            # Get all files in media directory
+            available_files = []
+            if os.path.exists(media_dir):
+                available_files = [f for f in os.listdir(media_dir) if os.path.isfile(os.path.join(media_dir, f))]
+            
+            for participant in all_participants:
+                participant_detail = {
+                    'participant_id': participant.id,
+                    'username': participant.user.user.username,
+                    'status': 'ok'
+                }
+                
+                # Check if main video file exists
+                if participant.video:
+                    try:
+                        video_path = participant.video.path
+                        if not os.path.exists(video_path):
+                            recovery_results['participants_with_missing_files'] += 1
+                            participant_detail['status'] = 'missing_main_video'
+                            participant_detail['expected_path'] = video_path
+                            
+                            # Try to find a matching file
+                            username = participant.user.user.username
+                            matching_files = [f for f in available_files if username.lower() in f.lower()]
+                            
+                            if matching_files:
+                                recovery_results['recovery_attempts'] += 1
+                                # Use the first matching file
+                                source_file = os.path.join(media_dir, matching_files[0])
+                                
+                                try:
+                                    # Copy the file to the expected location
+                                    import shutil
+                                    os.makedirs(os.path.dirname(video_path), exist_ok=True)
+                                    shutil.copy2(source_file, video_path)
+                                    
+                                    participant_detail['status'] = 'recovered'
+                                    participant_detail['recovered_from'] = matching_files[0]
+                                    recovery_results['successful_recoveries'] += 1
+                                    
+                                except Exception as recover_err:
+                                    participant_detail['status'] = 'recovery_failed'
+                                    participant_detail['error'] = str(recover_err)
+                                    recovery_results['failed_recoveries'] += 1
+                            else:
+                                participant_detail['status'] = 'no_matching_files'
+                                participant_detail['available_files'] = matching_files
+                                
+                    except Exception as e:
+                        participant_detail['status'] = 'error_checking'
+                        participant_detail['error'] = str(e)
+                
+                # Check temp video
+                if participant.temp_video:
+                    try:
+                        temp_path = participant.temp_video.path
+                        participant_detail['temp_video_exists'] = os.path.exists(temp_path)
+                    except:
+                        participant_detail['temp_video_exists'] = False
+                
+                recovery_results['details'].append(participant_detail)
+            
+            return Response(recovery_results, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': f'Recovery API error: {str(e)}',
+                'traceback': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class MediaDebugAPIView(APIView):
