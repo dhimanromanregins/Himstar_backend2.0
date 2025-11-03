@@ -170,13 +170,23 @@ class ParticipantDetailView(APIView):
                     
                     print(f"DEBUG PATCH: Participant saved, main video: {participant.video}")
                     
-                    # Clean up the temp file after successful move
-                    try:
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
-                            print(f"DEBUG PATCH: Cleaned up temp file: {temp_path}")
-                    except Exception as cleanup_err:
-                        print(f"DEBUG PATCH: Error cleaning temp file: {cleanup_err}")
+                    # DON'T clean up temp file immediately - let it stay for backup
+                    # The file will be cleaned up later by scheduled cleanup or when user uploads new video
+                    print(f"DEBUG PATCH: Keeping temp file for backup: {temp_path}")
+                    
+                    # Verify the main video file exists
+                    if participant.video:
+                        main_video_path = participant.video.path
+                        print(f"DEBUG PATCH: Main video path: {main_video_path}")
+                        print(f"DEBUG PATCH: Main video exists: {os.path.exists(main_video_path)}")
+                    
+                    # Only cleanup if we're absolutely sure the main video is saved correctly
+                    # try:
+                    #     if os.path.exists(temp_path) and participant.video and os.path.exists(participant.video.path):
+                    #         os.remove(temp_path)
+                    #         print(f"DEBUG PATCH: Cleaned up temp file: {temp_path}")
+                    # except Exception as cleanup_err:
+                    #     print(f"DEBUG PATCH: Error cleaning temp file: {cleanup_err}")
                     
                 else:
                     return Response({
@@ -1249,15 +1259,18 @@ class ParticipantTempSave(APIView):
             # If participant exists but hasn't paid, delete the old entry
             print(f"DEBUG: Deleting existing unpaid participant {existing_participant.id}")
             try:
-                # Clean up old video files before deletion if method exists
-                if hasattr(existing_participant, 'cleanup_video_files') and callable(existing_participant.cleanup_video_files):
-                    try:
-                        existing_participant.cleanup_video_files()
-                    except Exception as cleanup_err:
-                        # Log cleanup error but continue to attempt deletion
-                        print(f"DEBUG: cleanup_video_files failed: {cleanup_err}")
-                else:
-                    print("DEBUG: cleanup_video_files method not found on Participant instance; skipping cleanup")
+                # DON'T clean up video files automatically - they might be referenced by other participants
+                # or needed for recovery. Only delete the database record.
+                print("DEBUG: Skipping automatic video file cleanup to prevent data loss")
+                
+                # Note: Uncomment below if you want aggressive cleanup (not recommended)
+                # if hasattr(existing_participant, 'cleanup_video_files') and callable(existing_participant.cleanup_video_files):
+                #     try:
+                #         existing_participant.cleanup_video_files()
+                #     except Exception as cleanup_err:
+                #         print(f"DEBUG: cleanup_video_files failed: {cleanup_err}")
+                # else:
+                #     print("DEBUG: cleanup_video_files method not found on Participant instance")
 
                 existing_participant.delete()
                 print("DEBUG: Old unpaid participant entry deleted successfully")

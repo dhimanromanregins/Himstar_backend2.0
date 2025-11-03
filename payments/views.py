@@ -28,10 +28,71 @@ MEDIA_FOLDERS = [
 
 class PaymentCreateGetAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    
+    def cleanup_participant_and_videos(self, participant, username):
+        """
+        Clean up participant entry and associated video files
+        """
+        if not participant:
+            return
+            
+        print(f"Cleaning up participant {participant.id} and videos for user: {username}")
+        
+        # Clean up video files from all media folders
+        for folder in MEDIA_FOLDERS:
+            folder_path = os.path.join("media", folder)
+            if os.path.exists(folder_path):
+                for file in os.listdir(folder_path):
+                    if username in file:
+                        file_path = os.path.join(folder_path, file)
+                        try:
+                            os.remove(file_path)
+                            print(f"Deleted video file: {file_path}")
+                        except Exception as e:
+                            print(f"Error deleting file {file_path}: {e}")
+        
+        # Delete the participant entry
+        try:
+            participant_id = participant.id
+            participant.delete()
+            print(f"Successfully deleted participant entry: {participant_id}")
+        except Exception as e:
+            print(f"Error deleting participant: {e}")
+    
     def post(self, request):
         try:
             competition = request.data.get('competition')
             tci = request.data.get('tci')
+            payment_status = request.data.get('status')
+            
+            # Critical: Check if payment was successful
+            if payment_status != 'success':
+                # Clean up participant entry and videos for failed payments
+                register = Register.objects.filter(user=request.user).first()
+                if register:
+                    # Find the participant entry
+                    if tci:
+                        participant = Participant.objects.filter(user=register, competition__id=tci).first()
+                    else:
+                        participant = Participant.objects.filter(user=register, competition__id=competition).first()
+                    
+                    # Use cleanup method to remove participant and videos
+                    if participant:
+                        self.cleanup_participant_and_videos(participant, request.user.username)
+                
+                return Response({
+                    'error': 'Payment was not successful. Participant entry and video files have been cleaned up.',
+                    'status': payment_status
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Additional validation: Check payment amount
+            payment_amount = float(request.data.get('amount', 0))
+            if payment_amount <= 0:
+                return Response({
+                    'error': 'Invalid payment amount',
+                    'amount': payment_amount
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             serializer = PaymentSerializer(data=request.data)
             if serializer.is_valid():
                 serializer.save()
@@ -41,10 +102,20 @@ class PaymentCreateGetAPIView(APIView):
                     participant = Participant.objects.filter(user=register, competition__id=tci).first()
                 else:
                     participant = Participant.objects.filter(user=register, competition__id=competition).first()
-                # else:
-                    # participant = Participant.objects.filter(user=register, tournament__id=tournament).first()
-                # if not participant:
-                #     return Response({'message': 'You are not registered for this competition'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Critical: Check if participant exists
+                if not participant:
+                    return Response({
+                        'error': 'You are not registered for this competition',
+                        'competition_id': tci or competition
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                # Check if already paid to prevent double payment
+                if participant.is_paid:
+                    return Response({
+                        'error': 'Payment already processed for this competition',
+                        'participant_id': participant.id
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
                 participant.is_paid = True
                 
@@ -109,6 +180,58 @@ def successview(request):
 def failure(request):
     return render(request, 'failure.html')
 
+
+class CleanupUnpaidParticipantsAPIView(APIView):
+    """
+    API to clean up participants who uploaded videos but didn't complete payment
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def delete(self, request):
+        """
+        Clean up user's unpaid participant entries and associated videos
+        """
+        try:
+            competition_id = request.data.get('competition_id')
+            register = Register.objects.filter(user=request.user).first()
+            
+            if not register:
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Find unpaid participants
+            if competition_id:
+                unpaid_participants = Participant.objects.filter(
+                    user=register, 
+                    competition__id=competition_id,
+                    is_paid=False
+                )
+            else:
+                unpaid_participants = Participant.objects.filter(
+                    user=register,
+                    is_paid=False
+                )
+            
+            if not unpaid_participants.exists():
+                return Response({
+                    'message': 'No unpaid participants found to clean up'
+                }, status=status.HTTP_200_OK)
+            
+            cleanup_count = 0
+            for participant in unpaid_participants:
+                # Clean up videos and participant entry
+                PaymentCreateGetAPIView().cleanup_participant_and_videos(participant, request.user.username)
+                cleanup_count += 1
+            
+            return Response({
+                'message': f'Successfully cleaned up {cleanup_count} unpaid participant entries and their videos',
+                'cleaned_count': cleanup_count
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f'Cleanup error: {e}')
+            return Response({
+                'error': 'Something went wrong during cleanup'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # this is test
