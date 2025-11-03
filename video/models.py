@@ -29,6 +29,7 @@ class Participant(models.Model):
     file_uri = models.CharField(max_length=500, blank=True, null=True)
     is_paid = models.BooleanField(default=False)
 
+
     # def save(self, *args, **kwargs):
     #     super().save(*args, **kwargs)  # Save the instance first
 
@@ -45,6 +46,32 @@ class Participant(models.Model):
     #     if self.temp_video:
     #         delete_blob_from_azure(self.file_uri)
     #     super().delete(*args, **kwargs)
+
+    # def cleanup_video_files(self):
+    #     """
+    #     Clean up video files associated with this participant
+    #     """
+    #     MEDIA_FOLDERS = [
+    #         "competition_participants_temp_videos",
+    #         "competition_participants_videos", 
+    #         "merged_videos",
+    #         "temp_videos"
+    #     ]
+        
+    #     username = self.user.user.username
+    #     print(f"Cleaning up video files for participant {self.id}, user: {username}")
+        
+    #     for folder in MEDIA_FOLDERS:
+    #         folder_path = os.path.join("media", folder)
+    #         if os.path.exists(folder_path):
+    #             for file in os.listdir(folder_path):
+    #                 if username in file:
+    #                     file_path = os.path.join(folder_path, file)
+    #                     try:
+    #                         os.remove(file_path)
+    #                         print(f"Deleted video file: {file_path}")
+    #                     except Exception as e:
+    #                         print(f"Error deleting file {file_path}: {e}")
 
     def __str__(self):
         return f"{self.user.user.username}"
