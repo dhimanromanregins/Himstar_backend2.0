@@ -25,7 +25,7 @@ class ParticipantSerializer(serializers.ModelSerializer):
         representation['likes'] = likes
         representation['comments'] = comments
         representation['video'] = instance.video.url if instance.video else instance.file_uri
-        representation['comp_id'] = instance.competition.unique_id
+        representation['comp_id'] = instance.competition.unique_id if instance.competition else None
         return representation
 
 
