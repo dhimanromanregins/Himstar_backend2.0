@@ -182,7 +182,27 @@ class StartedCompetitionsView(APIView):
     def get(self, request):
         user_id = request.user.id
         category_id = request.GET.get('category_id')
-
+        
+        # Debug: Check current time and all competitions
+        current_time = now()
+        print(f"DEBUG StartedCompetitions: Current time = {current_time}")
+        
+        # Check all competitions first
+        all_competitions = Competition.objects.all()
+        print(f"DEBUG StartedCompetitions: Total competitions in DB = {all_competitions.count()}")
+        
+        # Check active competitions
+        active_competitions = Competition.objects.filter(is_active=True, competition_type='competition')
+        print(f"DEBUG StartedCompetitions: Active competitions = {active_competitions.count()}")
+        
+        # Check competitions that have started
+        started_competitions = Competition.objects.filter(
+            is_active=True,
+            start_date__lte=current_time,
+            competition_type='competition'
+        )
+        print(f"DEBUG StartedCompetitions: Started competitions = {started_competitions.count()}")
+        
         # Fetch competitions that have started and not ended yet
         competitions = Competition.objects.filter(
             is_active=True,
@@ -190,15 +210,27 @@ class StartedCompetitionsView(APIView):
             end_date__gte=now(),
             competition_type='competition',
         )
+        print(f"DEBUG StartedCompetitions: Started and not ended competitions = {competitions.count()}")
+        
+        # Print competition details
+        for comp in Competition.objects.filter(is_active=True, competition_type='competition')[:5]:
+            print(f"DEBUG Competition: {comp.name} | Start: {comp.start_date} | End: {comp.end_date} | Active: {comp.is_active}")
+            is_started = comp.start_date <= current_time if comp.start_date else False
+            is_not_ended = comp.end_date >= current_time if comp.end_date else False
+            print(f"  - Started: {is_started} | Not Ended: {is_not_ended}")
+        
         # If category_id is provided, filter by category
         if category_id:
             category = get_object_or_404(Category, id=category_id)
             competitions = competitions.filter(category=category)
+            print(f"DEBUG StartedCompetitions: After category filter = {competitions.count()}")
 
         # Serialize the competitions data
         competitions_serializer = CompetitionSerializer(
             competitions, many=True, context={'user_id': user_id}
         )
+        print(f"DEBUG StartedCompetitions: Serialized data count = {len(competitions_serializer.data)}")
+        
         # Return the response with ongoing competitions
         return Response({'competitions': competitions_serializer.data}, status=status.HTTP_200_OK)
 
