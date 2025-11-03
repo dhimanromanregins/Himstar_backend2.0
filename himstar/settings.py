@@ -222,4 +222,4 @@ SIMPLE_JWT = {
     'UPDATE_LAST_LOGIN': False,
 }
 
-DOMAIN_URL = "https://himstars.com"
+DOMAIN_URL = "https://himstar.co.in"
