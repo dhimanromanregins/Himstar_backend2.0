@@ -31,33 +31,38 @@ class PaymentCreateGetAPIView(APIView):
     
     def cleanup_participant_and_videos(self, participant, username):
         """
-        Clean up participant entry and associated video files
+        DISABLED: Clean up participant entry and associated video files
+        This was causing video files to be deleted during payment processing
         """
         if not participant:
             return
             
-        print(f"Cleaning up participant {participant.id} and videos for user: {username}")
+        print(f"PAYMENT: Skipping cleanup for participant {participant.id} and videos for user: {username}")
+        print(f"PAYMENT: Files will be preserved to prevent data loss")
         
-        # Clean up video files from all media folders
-        for folder in MEDIA_FOLDERS:
-            folder_path = os.path.join("media", folder)
-            if os.path.exists(folder_path):
-                for file in os.listdir(folder_path):
-                    if username in file:
-                        file_path = os.path.join(folder_path, file)
-                        try:
-                            os.remove(file_path)
-                            print(f"Deleted video file: {file_path}")
-                        except Exception as e:
-                            print(f"Error deleting file {file_path}: {e}")
+        # DISABLED: Clean up video files from all media folders
+        # This was deleting files that users had uploaded
+        # for folder in MEDIA_FOLDERS:
+        #     folder_path = os.path.join("media", folder)
+        #     if os.path.exists(folder_path):
+        #         for file in os.listdir(folder_path):
+        #             if username in file:
+        #                 file_path = os.path.join(folder_path, file)
+        #                 try:
+        #                     os.remove(file_path)
+        #                     print(f"Deleted video file: {file_path}")
+        #                 except Exception as e:
+        #                     print(f"Error deleting file {file_path}: {e}")
         
-        # Delete the participant entry
-        try:
-            participant_id = participant.id
-            participant.delete()
-            print(f"Successfully deleted participant entry: {participant_id}")
-        except Exception as e:
-            print(f"Error deleting participant: {e}")
+        # DISABLED: Delete the participant entry - keep for recovery
+        # try:
+        #     participant_id = participant.id
+        #     participant.delete()
+        #     print(f"Successfully deleted participant entry: {participant_id}")
+        # except Exception as e:
+        #     print(f"Error deleting participant: {e}")
+        
+        print(f"PAYMENT: Cleanup skipped - participant and files preserved")
     
     def post(self, request):
         try:
@@ -126,18 +131,25 @@ class PaymentCreateGetAPIView(APIView):
                     # video_filename.split('_')
                     # video_filename = video_filename.split('_')[0]
 
-                    for folder in MEDIA_FOLDERS:
-                        folder_path = os.path.join("media", folder)  # Get full folder path
-                        
-                        if os.path.exists(folder_path):  # Check if the folder exists
-                            for file in os.listdir(folder_path):  # Iterate through files in the folder
-                                if request.user.username in file:  # Check if video_filename is a substring
-                                    file_path = os.path.join(folder_path, file)
-                                    os.remove(file_path)  # Delete the file
-                                    print(f"Deleted: {file_path}")
-                                else:
-                                    print(f"Not matched:")
-                    participant.temp_video = None
+                    # DISABLED: Aggressive file cleanup that was deleting video files
+                    # This was causing videos to disappear after payment processing
+                    print(f"PAYMENT: NOT deleting files to prevent data loss")
+                    print(f"PAYMENT: temp_video will be kept as backup: {participant.temp_video}")
+                    
+                    # for folder in MEDIA_FOLDERS:
+                    #     folder_path = os.path.join("media", folder)  # Get full folder path
+                    #     
+                    #     if os.path.exists(folder_path):  # Check if the folder exists
+                    #         for file in os.listdir(folder_path):  # Iterate through files in the folder
+                    #             if request.user.username in file:  # Check if video_filename is a substring
+                    #                 file_path = os.path.join(folder_path, file)
+                    #                 os.remove(file_path)  # Delete the file
+                    #                 print(f"Deleted: {file_path}")
+                    #             else:
+                    #                 print(f"Not matched:")
+                    
+                    # Don't clear temp_video - keep it as backup
+                    # participant.temp_video = None
                     if participant.video:
                         participant.file_uri = f"{settings.DOMAIN_URL}{participant.video.url}"
                     participant.save(update_fields=['temp_video', 'file_uri'])
