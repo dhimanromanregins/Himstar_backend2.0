@@ -1269,11 +1269,17 @@ class ParticipantTempSave(APIView):
         
         # Create new participant entry
         try:
-            participant = Participant.objects.create(competition=competition, user=register)
-            print(f"DEBUG: New participant created with ID: {participant.id}")
+            from django.db import transaction
+            with transaction.atomic():
+                participant = Participant.objects.create(competition=competition, user=register)
+                print(f"DEBUG: New participant created with ID: {participant.id}")
+                print(f"DEBUG: Participant exists in DB: {Participant.objects.filter(id=participant.id).exists()}")
         except Exception as e:
             print(f"DEBUG: Error creating participant: {e}")
-            return Response({'detail': 'Error creating participant entry.'}, status=status.HTTP_400_BAD_REQUEST)
+            print(f"DEBUG: Exception type: {type(e)}")
+            import traceback
+            print(f"DEBUG: Traceback: {traceback.format_exc()}")
+            return Response({'detail': f'Error creating participant entry: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             # Ensure media directories exist
@@ -1354,11 +1360,29 @@ class ParticipantTempSave(APIView):
                 print(f"DEBUG: Final saved path: {saved_path}")
                 print(f"DEBUG: Final file exists: {os.path.exists(saved_path)}")
             
+            # Final verification
+            print(f"DEBUG: Final verification - Participant ID: {participant.id}")
+            print(f"DEBUG: Participant exists in DB after save: {Participant.objects.filter(id=participant.id).exists()}")
+            
+            # Check if the participant can be retrieved
+            verification_participant = Participant.objects.filter(id=participant.id).first()
+            if verification_participant:
+                print(f"DEBUG: Verification - temp_video: {verification_participant.temp_video}")
+                print(f"DEBUG: Verification - competition: {verification_participant.competition}")
+                print(f"DEBUG: Verification - user: {verification_participant.user}")
+            else:
+                print(f"DEBUG: ERROR - Participant {participant.id} not found in database!")
+            
             return Response({
                 "message": "Video uploaded successfully",
                 "participant_id": participant.id,
                 "temp_video_path": str(participant.temp_video) if participant.temp_video else None,
-                "file_uri": participant.file_uri
+                "file_uri": participant.file_uri,
+                "debug_info": {
+                    "participant_exists": Participant.objects.filter(id=participant.id).exists(),
+                    "file_saved_path": saved_path if participant.temp_video else None,
+                    "file_exists_on_disk": os.path.exists(saved_path) if participant.temp_video else False
+                }
             }, status=status.HTTP_200_OK)
             
         except FileNotFoundError as e:
