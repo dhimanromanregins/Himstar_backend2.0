@@ -696,6 +696,165 @@ class RecoverParticipantVideosAPIView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class ProductionMediaCheckAPIView(APIView):
+    """
+    Check production media directory permissions and setup
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Check production environment media setup"""
+        try:
+            media_root = settings.MEDIA_ROOT
+            media_dir = os.path.join(media_root, 'competition_participants_videos')
+            
+            check_results = {
+                'media_root': media_root,
+                'media_root_exists': os.path.exists(media_root),
+                'competition_dir': media_dir,
+                'competition_dir_exists': os.path.exists(media_dir),
+                'permissions_check': {},
+                'directory_creation_test': {},
+                'file_write_test': {},
+                'environment_info': {}
+            }
+            
+            # Environment info
+            check_results['environment_info'] = {
+                'debug_mode': settings.DEBUG,
+                'current_working_directory': os.getcwd(),
+                'process_id': os.getpid(),
+            }
+            
+            # Check if we're on Linux/Unix (production)
+            try:
+                import pwd
+                import grp
+                import stat
+                
+                # Get current process user info
+                current_uid = os.getuid()
+                current_gid = os.getgid()
+                check_results['environment_info'].update({
+                    'current_user_id': current_uid,
+                    'current_group_id': current_gid,
+                    'current_user_name': pwd.getpwuid(current_uid).pw_name,
+                    'current_group_name': grp.getgrgid(current_gid).gr_name,
+                    'platform': 'unix'
+                })
+                
+                # Check permissions for directories
+                for path, name in [(media_root, 'media_root'), (media_dir, 'competition_dir')]:
+                    if os.path.exists(path):
+                        stat_info = os.stat(path)
+                        owner = pwd.getpwuid(stat_info.st_uid).pw_name
+                        group = grp.getgrgid(stat_info.st_gid).gr_name
+                        
+                        check_results['permissions_check'][name] = {
+                            'path': path,
+                            'owner': owner,
+                            'group': group,
+                            'permissions_octal': oct(stat_info.st_mode)[-3:],
+                            'permissions_readable': stat.S_IMODE(stat_info.st_mode),
+                            'readable': os.access(path, os.R_OK),
+                            'writable': os.access(path, os.W_OK),
+                            'executable': os.access(path, os.X_OK)
+                        }
+                    else:
+                        check_results['permissions_check'][name] = {
+                            'path': path,
+                            'exists': False,
+                            'error': 'Directory does not exist'
+                        }
+                        
+            except ImportError:
+                # Windows environment
+                check_results['environment_info']['platform'] = 'windows'
+                for path, name in [(media_root, 'media_root'), (media_dir, 'competition_dir')]:
+                    if os.path.exists(path):
+                        check_results['permissions_check'][name] = {
+                            'path': path,
+                            'readable': os.access(path, os.R_OK),
+                            'writable': os.access(path, os.W_OK),
+                            'executable': os.access(path, os.X_OK)
+                        }
+            
+            # Test directory creation
+            try:
+                if not os.path.exists(media_dir):
+                    os.makedirs(media_dir, mode=0o755, exist_ok=True)
+                    check_results['directory_creation_test']['created_media_dir'] = True
+                
+                test_dir = os.path.join(media_dir, 'test_dir_permissions')
+                os.makedirs(test_dir, mode=0o755, exist_ok=True)
+                
+                check_results['directory_creation_test'] = {
+                    'success': True,
+                    'test_dir': test_dir,
+                    'exists_after_creation': os.path.exists(test_dir)
+                }
+                
+                # Clean up test directory
+                if os.path.exists(test_dir):
+                    os.rmdir(test_dir)
+                    
+            except Exception as e:
+                check_results['directory_creation_test'] = {
+                    'success': False,
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                }
+            
+            # Test file writing
+            try:
+                # Ensure directory exists first
+                os.makedirs(media_dir, mode=0o755, exist_ok=True)
+                
+                test_file_path = os.path.join(media_dir, 'test_write_permissions.txt')
+                test_content = 'Test file write permissions'
+                
+                with open(test_file_path, 'w') as f:
+                    f.write(test_content)
+                
+                # Verify file was written
+                file_exists = os.path.exists(test_file_path)
+                file_size = os.path.getsize(test_file_path) if file_exists else 0
+                
+                # Read back the content
+                read_content = ''
+                if file_exists:
+                    with open(test_file_path, 'r') as f:
+                        read_content = f.read()
+                
+                check_results['file_write_test'] = {
+                    'success': True,
+                    'test_file_path': test_file_path,
+                    'file_exists': file_exists,
+                    'file_size': file_size,
+                    'content_matches': read_content == test_content
+                }
+                
+                # Clean up test file
+                if os.path.exists(test_file_path):
+                    os.remove(test_file_path)
+                    
+            except Exception as e:
+                check_results['file_write_test'] = {
+                    'success': False,
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                }
+            
+            return Response(check_results, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': f'Production media check failed: {str(e)}',
+                'traceback': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class MediaDebugAPIView(APIView):
     """
     Debug API to check media directory and file system
