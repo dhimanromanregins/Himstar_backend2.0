@@ -552,7 +552,6 @@ class MediaDebugAPIView(APIView):
     """
     Debug API to check media directory and file system
     """
-    permission_classes = [IsAuthenticated]
     
     def get(self, request):
         """Get media directory information for debugging"""
