@@ -548,6 +548,115 @@ class DeleteParticipantAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class MediaDebugAPIView(APIView):
+    """
+    Debug API to check media directory and file system
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get media directory information for debugging"""
+        try:
+            media_root = settings.MEDIA_ROOT
+            media_dir = os.path.join(media_root, 'competition_participants_videos')
+            
+            debug_info = {
+                'media_root': media_root,
+                'media_root_exists': os.path.exists(media_root),
+                'competition_videos_dir': media_dir,
+                'competition_videos_dir_exists': os.path.exists(media_dir),
+                'files_in_media_root': [],
+                'files_in_competition_dir': [],
+                'total_participants': 0,
+                'participants_with_temp_video': 0,
+                'participants_with_main_video': 0,
+                'recent_participants': [],
+                'all_participants': []
+            }
+            
+            # List files in media root
+            if os.path.exists(media_root):
+                try:
+                    debug_info['files_in_media_root'] = os.listdir(media_root)
+                except Exception as e:
+                    debug_info['media_root_error'] = str(e)
+            
+            # List files in competition videos directory
+            if os.path.exists(media_dir):
+                try:
+                    files = os.listdir(media_dir)
+                    debug_info['files_in_competition_dir'] = files[:20]  # Limit to first 20
+                    debug_info['file_count'] = len(files)
+                    
+                    # Get file sizes
+                    for file in files[:10]:  # First 10 files with sizes
+                        file_path = os.path.join(media_dir, file)
+                        if os.path.isfile(file_path):
+                            size = os.path.getsize(file_path)
+                            debug_info['files_in_competition_dir'].append(f"{file} ({size} bytes)")
+                        
+                except Exception as e:
+                    debug_info['competition_dir_error'] = str(e)
+            
+            # Database checks
+            try:
+                debug_info['total_participants'] = Participant.objects.count()
+                
+                debug_info['participants_with_temp_video'] = Participant.objects.filter(
+                    temp_video__isnull=False
+                ).exclude(temp_video="").count()
+                
+                debug_info['participants_with_main_video'] = Participant.objects.filter(
+                    video__isnull=False
+                ).exclude(video="").count()
+                
+                # Get ALL participants (not just with temp_video)
+                all_participants = Participant.objects.all().order_by('-id')[:10]
+                
+                for participant in all_participants:
+                    p_info = {
+                        'id': participant.id,
+                        'user': participant.user.user.username,
+                        'competition_id': participant.competition.id if participant.competition else None,
+                        'competition_name': participant.competition.name if participant.competition else None,
+                        'is_paid': participant.is_paid,
+                        'video': str(participant.video) if participant.video else None,
+                        'temp_video': str(participant.temp_video) if participant.temp_video else None,
+                        'file_uri': participant.file_uri,
+                    }
+                    
+                    # Check if files exist
+                    if participant.temp_video:
+                        try:
+                            p_info['temp_video_path'] = participant.temp_video.path
+                            p_info['temp_video_exists'] = os.path.exists(participant.temp_video.path)
+                        except:
+                            p_info['temp_video_path'] = 'Error getting path'
+                            p_info['temp_video_exists'] = False
+                    
+                    if participant.video:
+                        try:
+                            p_info['video_path'] = participant.video.path
+                            p_info['video_exists'] = os.path.exists(participant.video.path)
+                        except:
+                            p_info['video_path'] = 'Error getting path'
+                            p_info['video_exists'] = False
+                    
+                    debug_info['all_participants'].append(p_info)
+                
+            except Exception as e:
+                debug_info['database_error'] = str(e)
+            
+            return Response(debug_info, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': f'Debug API error: {str(e)}',
+                'traceback': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class ActiveCompetitionVideosAPIView(APIView):
     """
     Active Competition Videos API
@@ -790,6 +899,7 @@ class ParticipantTempSave(APIView):
         video = request.FILES.get('video')
         print("DEBUG: Starting ParticipantTempSave post method")
         print(f"DEBUG: competition_id = {competition_id}, video = {video}")
+        print(f"DEBUG: MEDIA_ROOT = {settings.MEDIA_ROOT}")
         
         if not video:
             print("DEBUG: No video file provided")
@@ -801,6 +911,7 @@ class ParticipantTempSave(APIView):
             
         print("DEBUG: Video and competition_id validated")
         print(f"DEBUG: Video size = {video.size} bytes")
+        print(f"DEBUG: Video name = {video.name}")
         
         if video.size > 40 * 1024 * 1024:
             print("DEBUG: Video file too large")
@@ -860,43 +971,88 @@ class ParticipantTempSave(APIView):
             return Response({'detail': 'Error creating participant entry.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Compress the video if it's larger than 15MB (stored in local storage temporarily)
-            temp_path = default_storage.save(f"competition_participants_videos/{request.user.username}_{uuid.uuid4().hex}.{video.name.split('.')[-1]}", video)
-            compress_input_path = os.path.join(settings.MEDIA_ROOT, temp_path)
-            print(f"DEBUG: Video saved temporarily at: {temp_path}")
+            # Ensure media directories exist
+            media_dir = os.path.join(settings.MEDIA_ROOT, 'competition_participants_videos')
+            os.makedirs(media_dir, exist_ok=True)
+            print(f"DEBUG: Media directory ensured: {media_dir}")
+            
+            # Generate unique filename
+            file_extension = video.name.split('.')[-1] if '.' in video.name else 'mp4'
+            unique_filename = f"{request.user.username}_{uuid.uuid4().hex}.{file_extension}"
+            
+            # Save the uploaded video first
+            temp_path = default_storage.save(
+                f"competition_participants_videos/{unique_filename}", 
+                video
+            )
+            full_temp_path = os.path.join(settings.MEDIA_ROOT, temp_path)
+            print(f"DEBUG: Video saved temporarily to: {temp_path}")
+            print(f"DEBUG: Full temp path: {full_temp_path}")
+            print(f"DEBUG: File exists check: {os.path.exists(full_temp_path)}")
 
-            # Only compress if video is larger than 15MB
+            # Determine output path
             if video.size > 15 * 1024 * 1024:
-                output_path = os.path.join(settings.MEDIA_ROOT, "competition_participants_videos",
-                                            f"{uuid.uuid4().hex}.{video.name.split('.')[-1]}")
-                print(f"DEBUG: Starting compression for large video")
-                compress_status = compressVideo(compress_input_path, output_path)
+                # Compress for large videos
+                compressed_filename = f"compressed_{uuid.uuid4().hex}.{file_extension}"
+                output_path = os.path.join(settings.MEDIA_ROOT, "competition_participants_videos", compressed_filename)
+                print(f"DEBUG: Starting compression for large video to: {output_path}")
+                
+                compress_status = compressVideo(full_temp_path, output_path)
                 if not compress_status:
                     print("DEBUG: Compression failed")
-                    return Response({'detail': 'Something went wrong during compression.'}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({'detail': 'Video compression failed.'}, status=status.HTTP_400_BAD_REQUEST)
                 print("DEBUG: Compression completed successfully")
+                print(f"DEBUG: Compressed file exists: {os.path.exists(output_path)}")
             else:
-                # Use original file if it's small enough
-                output_path = compress_input_path
+                # Use original file for small videos
+                output_path = full_temp_path
                 print("DEBUG: Using original file (small size)")
+            
+            print(f"DEBUG: Final output path: {output_path}")
+            print(f"DEBUG: Output file exists: {os.path.exists(output_path)}")
+            
         except Exception as e:
             print(f"DEBUG: Error during video processing: {e}")
-            return Response({'detail': 'Error processing video file.'}, status=status.HTTP_400_BAD_REQUEST)
-        # else:
-        #     output_path = compress_input_path
+            print(f"DEBUG: Error type: {type(e)}")
+            import traceback
+            print(f"DEBUG: Traceback: {traceback.format_exc()}")
+            return Response({'detail': f'Error processing video file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             # Save the processed video to participant
-            print(f"DEBUG: Saving video to participant from: {output_path}")
+            print(f"DEBUG: Attempting to save video to participant from: {output_path}")
+            
+            if not os.path.exists(output_path):
+                print(f"DEBUG: ERROR - Output file does not exist: {output_path}")
+                return Response({'detail': 'Processed video file not found.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get file size for verification
+            file_size = os.path.getsize(output_path)
+            print(f"DEBUG: File size to save: {file_size} bytes")
+            
             with open(output_path, 'rb') as f:
                 django_file = File(f)
-                participant.temp_video.save(os.path.basename(output_path), django_file, save=True)
+                final_filename = os.path.basename(output_path)
+                print(f"DEBUG: Saving with filename: {final_filename}")
+                
+                # Save to temp_video field
+                participant.temp_video.save(final_filename, django_file, save=False)
+                print(f"DEBUG: temp_video field saved: {participant.temp_video}")
+                print(f"DEBUG: temp_video path: {participant.temp_video.path if participant.temp_video else 'None'}")
+                
+                participant.save()
+                print("DEBUG: Participant model saved successfully")
 
-            participant.save()
-            print("DEBUG: Participant saved successfully")
-
+            # Verify the file was saved
+            if participant.temp_video:
+                saved_path = participant.temp_video.path
+                print(f"DEBUG: Final saved path: {saved_path}")
+                print(f"DEBUG: Final file exists: {os.path.exists(saved_path)}")
+            
             return Response({
                 "message": "Video uploaded successfully",
+                "participant_id": participant.id,
+                "temp_video_path": str(participant.temp_video) if participant.temp_video else None,
                 "file_uri": participant.file_uri
             }, status=status.HTTP_200_OK)
             
@@ -905,4 +1061,7 @@ class ParticipantTempSave(APIView):
             return Response({'detail': 'Processed video file not found.'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             print(f"DEBUG: Error saving participant video: {e}")
-            return Response({'detail': 'Error saving video to participant.'}, status=status.HTTP_400_BAD_REQUEST)
+            print(f"DEBUG: Error type: {type(e)}")
+            import traceback
+            print(f"DEBUG: Traceback: {traceback.format_exc()}")
+            return Response({'detail': f'Error saving video to participant: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)

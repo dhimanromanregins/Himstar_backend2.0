@@ -8,7 +8,7 @@ from .views import (
     ShareListCreateView, ShareDetailView,
     MergeVideoAndMusic, RemoveTempVideo,
     PostShuffledListAPIView, LikeListView,ParticipantListCreateView, ParticipantDetailView, UserVideosAPIView, ParticipantTempSave,
-    DeleteParticipantAPIView, CompetitionDetailForUserAPIView, ActiveCompetitionVideosAPIView
+    DeleteParticipantAPIView, CompetitionDetailForUserAPIView, ActiveCompetitionVideosAPIView, MediaDebugAPIView
 )
 
 urlpatterns = [
@@ -37,5 +37,6 @@ urlpatterns = [
     path('delete-participant/', DeleteParticipantAPIView.as_view(), name='delete-participant'),
     path('competition-detail/<int:competition_id>/', CompetitionDetailForUserAPIView.as_view(), name='competition-detail-user'),
     path('active-competition-videos/', ActiveCompetitionVideosAPIView.as_view(), name='active-competition-videos'),
+    path('debug-media/', MediaDebugAPIView.as_view(), name='debug-media'),
 ]
 
