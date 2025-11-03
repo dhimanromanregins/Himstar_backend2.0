@@ -548,6 +548,91 @@ class DeleteParticipantAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class ActiveCompetitionVideosAPIView(APIView):
+    """
+    Active Competition Videos API
+    
+    Returns all videos from competitions that are currently active (between start and end dates).
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Get all videos from competitions that are currently active",
+        manual_parameters=[
+            openapi.Parameter(
+                'shuffle',
+                openapi.IN_QUERY,
+                description="Whether to shuffle the results (default: true)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            ),
+            openapi.Parameter(
+                'paid_only',
+                openapi.IN_QUERY,
+                description="Whether to include only paid participants (default: true)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="List of videos from active competitions",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Total number of videos'),
+                        'active_competitions_count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Number of active competitions'),
+                        'videos': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=ParticipantSerializer
+                        )
+                    }
+                )
+            )
+        },
+        tags=['Videos']
+    )
+    def get(self, request):
+        # Get query parameters
+        shuffle = request.query_params.get('shuffle', 'true').lower() == 'true'
+        paid_only = request.query_params.get('paid_only', 'true').lower() == 'true'
+        
+        print(f"DEBUG ActiveCompetitionVideosAPIView: shuffle={shuffle}, paid_only={paid_only}, today={today}")
+        
+        # Base query: get all participants with videos from competitions that are currently active
+        queryset = Participant.objects.filter(
+            competition__isnull=False,  # Has a competition
+            competition__start_date__lte=today,  # Competition has started
+            competition__end_date__gte=today,   # Competition hasn't ended
+            video__isnull=False  # Has a video
+        ).exclude(video="")  # Video field is not empty
+        
+        # Filter by paid participants if requested
+        if paid_only:
+            queryset = queryset.filter(is_paid=True)
+        
+        # Apply ordering
+        if shuffle:
+            queryset = queryset.order_by('?')  # Random order
+        else:
+            queryset = queryset.order_by('-id')  # Latest first
+        
+        # Get count of unique active competitions
+        active_competitions = queryset.values_list('competition_id', flat=True).distinct()
+        active_competitions_count = len(set(active_competitions))
+        
+        print(f"DEBUG ActiveCompetitionVideosAPIView: Found {queryset.count()} videos from {active_competitions_count} active competitions")
+        
+        # Serialize the data
+        serializer = ParticipantSerializer(queryset, many=True, context={'user_id': request.user.id})
+        
+        return Response({
+            'count': queryset.count(),
+            'active_competitions_count': active_competitions_count,
+            'videos': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
 class CompetitionDetailForUserAPIView(APIView):
     """
     Competition Detail API for Authenticated User
