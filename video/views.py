@@ -19,7 +19,7 @@ import threading
 from django.shortcuts import get_object_or_404
 from accounts.models import Register
 from rest_framework.permissions import IsAuthenticated
-from dashboard.models import Competition
+from dashboard.models import Competition, Tournament
 import subprocess
 from django.utils.timezone import now
 from django.core.files import File
@@ -300,20 +300,13 @@ class LikeAPIView(APIView):
         post = get_object_or_404(Participant, id=post_id)
         user_register = get_object_or_404(Register, user=user_id)
         like, created = Like.objects.get_or_create(user=user_register, post=post)
-        
-        # Get the video owner (the person who posted the video)
-        video_owner = post.user  # This is the Register object of the video owner
-        
         if not created:
-            # Unlike: Remove the like and decrease video owner's votes
             like.delete()
-            video_owner.votes = max(video_owner.votes - 1, 0)
-            video_owner.save()
+            user_register.votes = max(user_register.votes - 1, 0)
+            user_register.save()
             return Response({"message": "Post unliked"}, status=status.HTTP_200_OK)
-        
-        # Like: Add the like and increase video owner's votes
-        video_owner.votes += 1
-        video_owner.save()
+        user_register.votes += 1
+        user_register.save()
         return Response({"message": "Post liked"}, status=status.HTTP_200_OK)
 
 
@@ -977,6 +970,394 @@ class MediaDebugAPIView(APIView):
                 'error': f'Debug API error: {str(e)}',
                 'traceback': traceback.format_exc()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class GetVideosByIdAPIView(APIView):
+    """
+    Get Videos by ID API
+    
+    Pass any ID and the backend will automatically determine if it's a competition or tournament,
+    then return all videos for that entity.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Get all videos by passing any ID - backend auto-detects if it's competition or tournament",
+        manual_parameters=[
+            openapi.Parameter(
+                'shuffle',
+                openapi.IN_QUERY,
+                description="Whether to shuffle the results (default: false)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            ),
+            openapi.Parameter(
+                'paid_only',
+                openapi.IN_QUERY,
+                description="Whether to include only paid participants (default: true)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            ),
+            openapi.Parameter(
+                'include_active_only',
+                openapi.IN_QUERY,
+                description="Whether to include only videos from active competitions/tournaments (default: false)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="List of videos from the detected competition or tournament",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'type': openapi.Schema(type=openapi.TYPE_STRING, description='Type: competition or tournament'),
+                        'entity_info': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            description='Competition or tournament details'
+                        ),
+                        'count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Total number of videos'),
+                        'videos': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=ParticipantSerializer
+                        )
+                    }
+                )
+            ),
+            404: openapi.Response(description="No competition or tournament found with this ID")
+        },
+        tags=['Videos']
+    )
+    def get(self, request, entity_id):
+        from django.utils import timezone
+        from dashboard.models import Tournament, Competition
+        
+        # Get query parameters
+        shuffle = request.query_params.get('shuffle', 'false').lower() == 'true'
+        paid_only = request.query_params.get('paid_only', 'true').lower() == 'true'
+        include_active_only = request.query_params.get('include_active_only', 'false').lower() == 'true'
+        
+        today = timezone.now()
+        
+        entity_info = {}
+        entity_type = None
+        queryset = Participant.objects.none()  # Empty queryset by default
+        
+        # First, try to find a competition with this ID
+        try:
+            competition = Competition.objects.get(id=entity_id)
+            entity_type = 'competition'
+            
+            # Build entity info for competition
+            entity_info = {
+                'id': competition.id,
+                'unique_id': competition.unique_id,
+                'name': competition.name,
+                'description': competition.description,
+                'competition_type': competition.competition_type,
+                'category': competition.category.name if competition.category else None,
+                'start_date': competition.start_date,
+                'end_date': competition.end_date,
+                'is_active': competition.is_active,
+                'max_participants': competition.max_participants,
+                'price': competition.price
+            }
+            
+            # Build queryset for competition videos
+            queryset = Participant.objects.filter(
+                competition=competition,
+                video__isnull=False  # Has a video
+            ).exclude(video="")  # Video field is not empty
+            
+            # Filter by active status if requested
+            if include_active_only:
+                if competition.start_date and competition.end_date:
+                    if not (competition.start_date <= today <= competition.end_date):
+                        queryset = Participant.objects.none()  # Empty if not active
+                        
+        except Competition.DoesNotExist:
+            # If no competition found, try to find a tournament with this ID
+            try:
+                tournament = Tournament.objects.get(id=entity_id)
+                entity_type = 'tournament'
+                
+                # Build entity info for tournament
+                entity_info = {
+                    'id': tournament.id,
+                    'unique_id': tournament.unique_id,
+                    'name': tournament.name,
+                    'description': tournament.description,
+                    'total_rounds': tournament.total_rounds,
+                    'category': tournament.category.name if tournament.category else None,
+                    'start_date': tournament.start_date,
+                    'end_date': tournament.end_date,
+                    'is_active': tournament.is_active,
+                    'max_participants': tournament.max_participants,
+                    'price': tournament.price
+                }
+                
+                # Get all competitions associated with this tournament
+                tournament_competitions = tournament.competitions.all()
+                
+                # Build queryset for all videos in all competitions of this tournament
+                queryset = Participant.objects.filter(
+                    competition__in=tournament_competitions,
+                    video__isnull=False  # Has a video
+                ).exclude(video="")  # Video field is not empty
+                
+                # Filter by active status if requested
+                if include_active_only:
+                    if tournament.start_date and tournament.end_date:
+                        if not (tournament.start_date <= today <= tournament.end_date):
+                            queryset = Participant.objects.none()  # Empty if not active
+                            
+            except Tournament.DoesNotExist:
+                # Neither competition nor tournament found
+                return Response({
+                    'error': f'No competition or tournament found with ID: {entity_id}'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Filter by paid participants if requested
+        if paid_only:
+            queryset = queryset.filter(is_paid=True)
+        
+        # Apply ordering
+        if shuffle:
+            queryset = queryset.order_by('?')  # Random order
+        else:
+            queryset = queryset.order_by('-id')  # Latest first
+        
+        print(f"DEBUG GetVideosByIdAPIView: Found {queryset.count()} videos for {entity_type} ID: {entity_id}")
+        
+        # Serialize the data
+        serializer = ParticipantSerializer(queryset, many=True, context={'user_id': request.user.id})
+        
+        return Response({
+            'type': entity_type,
+            'entity_info': entity_info,
+            'count': queryset.count(),
+            'videos': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class CompetitionTournamentVideosAPIView(APIView):
+    """
+    Competition/Tournament Videos API
+    
+    Returns all videos for a specific competition or tournament by ID or unique_id.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Get all videos for a specific competition or tournament",
+        manual_parameters=[
+            openapi.Parameter(
+                'competition_id',
+                openapi.IN_QUERY,
+                description="Competition ID (numeric)",
+                type=openapi.TYPE_INTEGER,
+                required=False
+            ),
+            openapi.Parameter(
+                'tournament_id', 
+                openapi.IN_QUERY,
+                description="Tournament ID (numeric)",
+                type=openapi.TYPE_INTEGER,
+                required=False
+            ),
+            openapi.Parameter(
+                'unique_id',
+                openapi.IN_QUERY,
+                description="Unique ID (e.g., COMP12345678 or TOUR12345678)",
+                type=openapi.TYPE_STRING,
+                required=False
+            ),
+            openapi.Parameter(
+                'shuffle',
+                openapi.IN_QUERY,
+                description="Whether to shuffle the results (default: false)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            ),
+            openapi.Parameter(
+                'paid_only',
+                openapi.IN_QUERY,
+                description="Whether to include only paid participants (default: true)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            ),
+            openapi.Parameter(
+                'include_active_only',
+                openapi.IN_QUERY,
+                description="Whether to include only videos from active competitions/tournaments (default: false)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False
+            )
+        ],
+        responses={
+            200: openapi.Response(
+                description="List of videos from the specified competition or tournament",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'type': openapi.Schema(type=openapi.TYPE_STRING, description='Type: competition or tournament'),
+                        'entity_info': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            description='Competition or tournament details'
+                        ),
+                        'count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Total number of videos'),
+                        'videos': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=ParticipantSerializer
+                        )
+                    }
+                )
+            ),
+            400: openapi.Response(description="Missing or invalid parameters"),
+            404: openapi.Response(description="Competition or tournament not found")
+        },
+        tags=['Videos']
+    )
+    def get(self, request):
+        from django.utils import timezone
+        from dashboard.models import Tournament, Competition
+        
+        # Get query parameters
+        competition_id = request.query_params.get('competition_id')
+        tournament_id = request.query_params.get('tournament_id') 
+        unique_id = request.query_params.get('unique_id')
+        shuffle = request.query_params.get('shuffle', 'false').lower() == 'true'
+        paid_only = request.query_params.get('paid_only', 'true').lower() == 'true'
+        include_active_only = request.query_params.get('include_active_only', 'false').lower() == 'true'
+        
+        today = timezone.now()
+        
+        # Validate that at least one identifier is provided
+        if not any([competition_id, tournament_id, unique_id]):
+            return Response({
+                'error': 'Please provide either competition_id, tournament_id, or unique_id parameter'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        entity_info = {}
+        entity_type = None
+        queryset = Participant.objects.none()  # Empty queryset by default
+        
+        try:
+            # Handle competition requests
+            if competition_id or (unique_id and unique_id.startswith('COMP')):
+                entity_type = 'competition'
+                
+                if unique_id and unique_id.startswith('COMP'):
+                    competition = Competition.objects.get(unique_id=unique_id)
+                else:
+                    competition = Competition.objects.get(id=competition_id)
+                
+                # Build entity info
+                entity_info = {
+                    'id': competition.id,
+                    'unique_id': competition.unique_id,
+                    'name': competition.name,
+                    'description': competition.description,
+                    'competition_type': competition.competition_type,
+                    'category': competition.category.name if competition.category else None,
+                    'start_date': competition.start_date,
+                    'end_date': competition.end_date,
+                    'is_active': competition.is_active,
+                    'max_participants': competition.max_participants,
+                    'price': competition.price
+                }
+                
+                # Build queryset for competition videos
+                queryset = Participant.objects.filter(
+                    competition=competition,
+                    video__isnull=False  # Has a video
+                ).exclude(video="")  # Video field is not empty
+                
+                # Filter by active status if requested
+                if include_active_only:
+                    if competition.start_date and competition.end_date:
+                        if not (competition.start_date <= today <= competition.end_date):
+                            queryset = Participant.objects.none()  # Empty if not active
+                    
+            # Handle tournament requests  
+            elif tournament_id or (unique_id and unique_id.startswith('TOUR')):
+                entity_type = 'tournament'
+                
+                if unique_id and unique_id.startswith('TOUR'):
+                    tournament = Tournament.objects.get(unique_id=unique_id)
+                else:
+                    tournament = Tournament.objects.get(id=tournament_id)
+                
+                # Build entity info
+                entity_info = {
+                    'id': tournament.id,
+                    'unique_id': tournament.unique_id,
+                    'name': tournament.name,
+                    'description': tournament.description,
+                    'total_rounds': tournament.total_rounds,
+                    'category': tournament.category.name if tournament.category else None,
+                    'start_date': tournament.start_date,
+                    'end_date': tournament.end_date,
+                    'is_active': tournament.is_active,
+                    'max_participants': tournament.max_participants,
+                    'price': tournament.price
+                }
+                
+                # Get all competitions associated with this tournament
+                tournament_competitions = tournament.competitions.all()
+                
+                # Build queryset for all videos in all competitions of this tournament
+                queryset = Participant.objects.filter(
+                    competition__in=tournament_competitions,
+                    video__isnull=False  # Has a video
+                ).exclude(video="")  # Video field is not empty
+                
+                # Filter by active status if requested
+                if include_active_only:
+                    if tournament.start_date and tournament.end_date:
+                        if not (tournament.start_date <= today <= tournament.end_date):
+                            queryset = Participant.objects.none()  # Empty if not active
+            
+            else:
+                return Response({
+                    'error': 'Invalid unique_id format. Must start with COMP or TOUR'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Competition.DoesNotExist:
+            return Response({
+                'error': 'Competition not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Tournament.DoesNotExist:
+            return Response({
+                'error': 'Tournament not found'  
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'Error retrieving data: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Filter by paid participants if requested
+        if paid_only:
+            queryset = queryset.filter(is_paid=True)
+        
+        # Apply ordering
+        if shuffle:
+            queryset = queryset.order_by('?')  # Random order
+        else:
+            queryset = queryset.order_by('-id')  # Latest first
+        
+        print(f"DEBUG CompetitionTournamentVideosAPIView: Found {queryset.count()} videos for {entity_type}")
+        
+        # Serialize the data
+        serializer = ParticipantSerializer(queryset, many=True, context={'user_id': request.user.id})
+        
+        return Response({
+            'type': entity_type,
+            'entity_info': entity_info,
+            'count': queryset.count(),
+            'videos': serializer.data
+        }, status=status.HTTP_200_OK)
 
 
 class ActiveCompetitionVideosAPIView(APIView):
