@@ -1666,7 +1666,7 @@ class TimezoneInfoAPIView(APIView):
     
     Shows detailed timezone information for debugging purposes.
     """
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description="Get timezone and datetime information for debugging",
