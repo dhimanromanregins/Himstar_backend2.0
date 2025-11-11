@@ -1679,7 +1679,10 @@ class TimezoneInfoAPIView(APIView):
                         'django_settings': openapi.Schema(type=openapi.TYPE_OBJECT),
                         'server_time': openapi.Schema(type=openapi.TYPE_OBJECT),
                         'database_time': openapi.Schema(type=openapi.TYPE_OBJECT),
-                        'sample_competition_dates': openapi.Schema(type=openapi.TYPE_ARRAY)
+                        'sample_competition_dates': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(type=openapi.TYPE_OBJECT)
+                        )
                     }
                 )
             )
