@@ -9,7 +9,7 @@ from .views import (
     MergeVideoAndMusic, RemoveTempVideo,
     PostShuffledListAPIView, LikeListView,ParticipantListCreateView, ParticipantDetailView, UserVideosAPIView, ParticipantTempSave,
     DeleteParticipantAPIView, CompetitionDetailForUserAPIView, ActiveCompetitionVideosAPIView, MediaDebugAPIView, RecoverParticipantVideosAPIView,
-    ProductionMediaCheckAPIView, CompetitionTournamentVideosAPIView, GetVideosByIdAPIView
+    ProductionMediaCheckAPIView, CompetitionTournamentVideosAPIView, GetVideosByIdAPIView, TimezoneInfoAPIView, TimeComparisonDebugAPIView
 )
 
 urlpatterns = [
@@ -40,6 +40,8 @@ urlpatterns = [
     path('active-competition-videos/', ActiveCompetitionVideosAPIView.as_view(), name='active-competition-videos'),
     path('competition-tournament-videos/', CompetitionTournamentVideosAPIView.as_view(), name='competition-tournament-videos'),
     path('videos/<int:entity_id>/', GetVideosByIdAPIView.as_view(), name='get-videos-by-id'),
+    path('timezone-info/', TimezoneInfoAPIView.as_view(), name='timezone-info'),
+    path('time-debug/', TimeComparisonDebugAPIView.as_view(), name='time-debug'),
     path('debug-media/', MediaDebugAPIView.as_view(), name='debug-media'),
     path('recover-videos/', RecoverParticipantVideosAPIView.as_view(), name='recover-videos'),
     path('check-production-media/', ProductionMediaCheckAPIView.as_view(), name='check-production-media'),

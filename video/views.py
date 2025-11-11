@@ -1406,13 +1406,37 @@ class ActiveCompetitionVideosAPIView(APIView):
     )
     def get(self, request):
         from django.utils import timezone
+        from datetime import datetime
+        import pytz
+        
+        # Get multiple timezone references
         today = timezone.now()
+        today_local = timezone.localtime(today)
+        system_now = datetime.now()
         
         # Get query parameters
         shuffle = request.query_params.get('shuffle', 'true').lower() == 'true'
         paid_only = request.query_params.get('paid_only', 'true').lower() == 'true'
         
-        print(f"DEBUG ActiveCompetitionVideosAPIView: shuffle={shuffle}, paid_only={paid_only}, today={today}")
+        print(f"DEBUG ActiveCompetitionVideosAPIView: shuffle={shuffle}, paid_only={paid_only}")
+        print(f"DEBUG TIMEZONE INFO:")
+        print(f"  - UTC Now: {today}")
+        print(f"  - Local Now: {today_local}")
+        print(f"  - System Now: {system_now}")
+        print(f"  - Timezone: {today_local.tzinfo}")
+        print(f"  - UTC Offset: {today_local.strftime('%z')}")
+        
+        # Check if there's any timezone-related delay
+        from django.conf import settings
+        print(f"  - Django TIME_ZONE setting: {settings.TIME_ZONE}")
+        print(f"  - Django USE_TZ setting: {settings.USE_TZ}")
+        
+        # Test with different time comparisons
+        test_time_utc = today
+        test_time_local = today_local.replace(tzinfo=None)
+        print(f"DEBUG TIME COMPARISON TESTS:")
+        print(f"  - Using UTC for comparison: {test_time_utc}")
+        print(f"  - Using Local for comparison: {test_time_local}")
         
         # Log all competitions and their dates for debugging
         all_competitions = Competition.objects.all()
@@ -1420,12 +1444,41 @@ class ActiveCompetitionVideosAPIView(APIView):
         
         for comp in all_competitions:
             print(f"DEBUG Competition ID {comp.id}: '{comp.name}'")
-            print(f"  - Start Date: {comp.start_date}")
-            print(f"  - End Date: {comp.end_date}")
-            print(f"  - Is Active: {comp.is_active}")
-            print(f"  - Today ({today}) >= Start: {comp.start_date <= today if comp.start_date else 'No start date'}")
-            print(f"  - Today ({today}) <= End: {comp.end_date >= today if comp.end_date else 'No end date'}")
-            print(f"  - Is Currently Active: {comp.start_date <= today <= comp.end_date if comp.start_date and comp.end_date else 'Cannot determine'}")
+            print(f"  - Start Date (Raw): {comp.start_date}")
+            print(f"  - End Date (Raw): {comp.end_date}")
+            print(f"  - Is Active Flag: {comp.is_active}")
+            
+            if comp.start_date:
+                start_local = timezone.localtime(comp.start_date)
+                time_diff_start = (today - comp.start_date).total_seconds()
+                print(f"  - Start Date (Local): {start_local}")
+                print(f"  - Time diff from start (seconds): {time_diff_start}")
+                print(f"  - Time diff from start (minutes): {time_diff_start / 60}")
+                print(f"  - Has competition started? {comp.start_date <= today}")
+                
+                # Check with 20-minute buffer for debugging
+                start_with_buffer = comp.start_date - timezone.timedelta(minutes=20)
+                print(f"  - Start with -20min buffer: {start_with_buffer}")
+                print(f"  - Would be active with buffer? {start_with_buffer <= today}")
+            
+            if comp.end_date:
+                end_local = timezone.localtime(comp.end_date)
+                time_diff_end = (comp.end_date - today).total_seconds()
+                print(f"  - End Date (Local): {end_local}")
+                print(f"  - Time diff to end (seconds): {time_diff_end}")
+                print(f"  - Time diff to end (minutes): {time_diff_end / 60}")
+                print(f"  - Has competition ended? {comp.end_date < today}")
+            
+            # Overall active status
+            if comp.start_date and comp.end_date:
+                is_currently_active = comp.start_date <= today <= comp.end_date
+                print(f"  - Is Currently Active: {is_currently_active}")
+                
+                if not is_currently_active and comp.start_date > today:
+                    minutes_until_start = (comp.start_date - today).total_seconds() / 60
+                    print(f"  - Minutes until competition starts: {minutes_until_start}")
+            else:
+                print(f"  - Cannot determine active status (missing dates)")
             
             # Check participants for this competition
             participants_count = Participant.objects.filter(competition=comp).count()
@@ -1435,9 +1488,29 @@ class ActiveCompetitionVideosAPIView(APIView):
             print(f"  - Total Participants: {participants_count}")
             print(f"  - Participants with Video: {participants_with_video}")
             print(f"  - Paid Participants: {paid_participants}")
-            print("  ---")
+            print("  " + "="*50)
         
         # Base query: get all participants with videos from competitions that are currently active
+        print(f"DEBUG QUERY BUILDING:")
+        print(f"  - Query time reference (UTC): {today}")
+        print(f"  - Looking for competitions where:")
+        print(f"    * start_date <= {today}")
+        print(f"    * end_date >= {today}")
+        
+        # Build query step by step for debugging
+        base_participants = Participant.objects.filter(competition__isnull=False)
+        print(f"  - Total participants with competitions: {base_participants.count()}")
+        
+        started_competitions = base_participants.filter(competition__start_date__lte=today)
+        print(f"  - Participants in started competitions: {started_competitions.count()}")
+        
+        active_competitions = started_competitions.filter(competition__end_date__gte=today)
+        print(f"  - Participants in currently active competitions: {active_competitions.count()}")
+        
+        with_videos = active_competitions.filter(video__isnull=False).exclude(video="")
+        print(f"  - Participants with videos in active competitions: {with_videos.count()}")
+        
+        # Final queryset
         queryset = Participant.objects.filter(
             competition__isnull=False,  # Has a competition
             competition__start_date__lte=today,  # Competition has started
@@ -1446,6 +1519,17 @@ class ActiveCompetitionVideosAPIView(APIView):
         ).exclude(video="")  # Video field is not empty
         
         print(f"DEBUG: Found {queryset.count()} participants matching active competition criteria")
+        
+        # Log which competitions are being included in the queryset
+        included_competition_ids = queryset.values_list('competition_id', flat=True).distinct()
+        print(f"DEBUG: Competition IDs included in queryset: {list(included_competition_ids)}")
+        
+        # Check each included competition's timing
+        for comp_id in included_competition_ids:
+            comp = Competition.objects.get(id=comp_id)
+            start_diff = (today - comp.start_date).total_seconds() / 60 if comp.start_date else None
+            end_diff = (comp.end_date - today).total_seconds() / 60 if comp.end_date else None
+            print(f"  - Competition {comp_id} '{comp.name}': started {start_diff:.1f} min ago, ends in {end_diff:.1f} min")
 
 
         
@@ -1490,6 +1574,199 @@ class ActiveCompetitionVideosAPIView(APIView):
             'count': queryset.count(),
             'active_competitions_count': active_competitions_count,
             'videos': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class TimeComparisonDebugAPIView(APIView):
+    """
+    Time Comparison Debug API
+    
+    Debug API to test the 20-minute delay issue with competition start times.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Debug time comparison issues with competition start times",
+        responses={
+            200: openapi.Response(
+                description="Time comparison debug information",
+                schema=openapi.Schema(type=openapi.TYPE_OBJECT)
+            )
+        },
+        tags=['Debug']
+    )
+    def get(self, request):
+        from django.utils import timezone
+        from datetime import datetime, timedelta
+        
+        now_utc = timezone.now()
+        now_local = timezone.localtime(now_utc)
+        
+        debug_info = {
+            'current_time': {
+                'utc': now_utc.isoformat(),
+                'local': now_local.isoformat(),
+                'timestamp': now_utc.timestamp(),
+            },
+            'competitions_analysis': [],
+            'possible_issues': []
+        }
+        
+        # Check recent competitions (those that started within last hour or will start within next hour)
+        recent_competitions = Competition.objects.filter(
+            start_date__gte=now_utc - timedelta(hours=1),
+            start_date__lte=now_utc + timedelta(hours=1)
+        )
+        
+        for comp in recent_competitions:
+            comp_analysis = {
+                'id': comp.id,
+                'name': comp.name,
+                'start_date_utc': comp.start_date.isoformat(),
+                'start_date_local': timezone.localtime(comp.start_date).isoformat(),
+                'start_timestamp': comp.start_date.timestamp(),
+                'time_diff_seconds': (now_utc - comp.start_date).total_seconds(),
+                'time_diff_minutes': (now_utc - comp.start_date).total_seconds() / 60,
+                'is_started_by_comparison': comp.start_date <= now_utc,
+                'participants_count': Participant.objects.filter(competition=comp).count(),
+                'active_query_includes': Participant.objects.filter(
+                    competition=comp,
+                    competition__start_date__lte=now_utc,
+                    competition__end_date__gte=now_utc,
+                    video__isnull=False
+                ).exclude(video="").exists()
+            }
+            debug_info['competitions_analysis'].append(comp_analysis)
+        
+        # Check for potential issues
+        if not recent_competitions.exists():
+            debug_info['possible_issues'].append("No competitions found within 1 hour window")
+        
+        # Check timezone settings
+        from django.conf import settings
+        debug_info['django_settings'] = {
+            'TIME_ZONE': settings.TIME_ZONE,
+            'USE_TZ': settings.USE_TZ,
+        }
+        
+        # Test different time formats
+        debug_info['time_format_tests'] = {
+            'utc_now': str(now_utc),
+            'local_now': str(now_local),
+            'naive_now': str(datetime.now()),
+            'utc_timestamp': now_utc.timestamp(),
+        }
+        
+        return Response(debug_info, status=status.HTTP_200_OK)
+
+
+class TimezoneInfoAPIView(APIView):
+    """
+    Timezone Information API
+    
+    Shows detailed timezone information for debugging purposes.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Get timezone and datetime information for debugging",
+        responses={
+            200: openapi.Response(
+                description="Timezone information",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'django_settings': openapi.Schema(type=openapi.TYPE_OBJECT),
+                        'server_time': openapi.Schema(type=openapi.TYPE_OBJECT),
+                        'database_time': openapi.Schema(type=openapi.TYPE_OBJECT),
+                        'sample_competition_dates': openapi.Schema(type=openapi.TYPE_ARRAY)
+                    }
+                )
+            )
+        },
+        tags=['Debug']
+    )
+    def get(self, request):
+        from django.utils import timezone
+        from django.conf import settings
+        import pytz
+        from datetime import datetime
+        
+        # Get Django timezone settings
+        django_info = {
+            'TIME_ZONE': settings.TIME_ZONE,
+            'USE_TZ': settings.USE_TZ,
+            'LANGUAGE_CODE': settings.LANGUAGE_CODE,
+        }
+        
+        # Get current server time information
+        now_utc = timezone.now()
+        now_local = timezone.localtime(now_utc)
+        
+        server_info = {
+            'current_utc_time': now_utc.isoformat(),
+            'current_local_time': now_local.isoformat(),
+            'timezone_name': str(now_local.tzinfo),
+            'utc_offset': now_local.strftime('%z'),
+            'is_dst': now_local.dst() is not None and now_local.dst().total_seconds() != 0,
+        }
+        
+        # Get system timezone info
+        try:
+            system_tz = pytz.timezone(settings.TIME_ZONE)
+            server_info['timezone_full_name'] = str(system_tz)
+            server_info['timezone_abbreviation'] = now_local.strftime('%Z')
+        except Exception as e:
+            server_info['timezone_error'] = str(e)
+        
+        # Database time check
+        from django.db import connection
+        database_info = {}
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT datetime('now');")  # SQLite format
+                db_time = cursor.fetchone()[0]
+                database_info['database_current_time'] = db_time
+                database_info['database_type'] = connection.vendor
+        except Exception as e:
+            database_info['database_error'] = str(e)
+        
+        # Sample competition dates for comparison
+        sample_competitions = []
+        competitions = Competition.objects.all()[:5]  # Get first 5 competitions
+        
+        for comp in competitions:
+            comp_info = {
+                'id': comp.id,
+                'name': comp.name,
+                'start_date_raw': str(comp.start_date),
+                'end_date_raw': str(comp.end_date),
+                'start_date_local': timezone.localtime(comp.start_date).isoformat() if comp.start_date else None,
+                'end_date_local': timezone.localtime(comp.end_date).isoformat() if comp.end_date else None,
+                'is_currently_active': (
+                    comp.start_date <= now_utc <= comp.end_date 
+                    if comp.start_date and comp.end_date 
+                    else None
+                ),
+                'days_from_now_to_start': (
+                    (comp.start_date - now_utc).days 
+                    if comp.start_date 
+                    else None
+                ),
+                'days_from_now_to_end': (
+                    (comp.end_date - now_utc).days 
+                    if comp.end_date 
+                    else None
+                ),
+            }
+            sample_competitions.append(comp_info)
+        
+        return Response({
+            'django_settings': django_info,
+            'server_time': server_info,
+            'database_time': database_info,
+            'sample_competition_dates': sample_competitions,
+            'total_competitions': competitions.count(),
         }, status=status.HTTP_200_OK)
 
 
