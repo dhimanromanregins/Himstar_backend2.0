@@ -1583,7 +1583,7 @@ class TimeComparisonDebugAPIView(APIView):
     
     Debug API to test the 20-minute delay issue with competition start times.
     """
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description="Debug time comparison issues with competition start times",
@@ -1666,7 +1666,6 @@ class TimezoneInfoAPIView(APIView):
     
     Shows detailed timezone information for debugging purposes.
     """
-    # permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description="Get timezone and datetime information for debugging",
