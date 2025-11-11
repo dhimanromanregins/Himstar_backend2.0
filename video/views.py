@@ -1414,6 +1414,29 @@ class ActiveCompetitionVideosAPIView(APIView):
         
         print(f"DEBUG ActiveCompetitionVideosAPIView: shuffle={shuffle}, paid_only={paid_only}, today={today}")
         
+        # Log all competitions and their dates for debugging
+        all_competitions = Competition.objects.all()
+        print(f"DEBUG: Total competitions in database: {all_competitions.count()}")
+        
+        for comp in all_competitions:
+            print(f"DEBUG Competition ID {comp.id}: '{comp.name}'")
+            print(f"  - Start Date: {comp.start_date}")
+            print(f"  - End Date: {comp.end_date}")
+            print(f"  - Is Active: {comp.is_active}")
+            print(f"  - Today ({today}) >= Start: {comp.start_date <= today if comp.start_date else 'No start date'}")
+            print(f"  - Today ({today}) <= End: {comp.end_date >= today if comp.end_date else 'No end date'}")
+            print(f"  - Is Currently Active: {comp.start_date <= today <= comp.end_date if comp.start_date and comp.end_date else 'Cannot determine'}")
+            
+            # Check participants for this competition
+            participants_count = Participant.objects.filter(competition=comp).count()
+            participants_with_video = Participant.objects.filter(competition=comp, video__isnull=False).exclude(video="").count()
+            paid_participants = Participant.objects.filter(competition=comp, is_paid=True).count()
+            
+            print(f"  - Total Participants: {participants_count}")
+            print(f"  - Participants with Video: {participants_with_video}")
+            print(f"  - Paid Participants: {paid_participants}")
+            print("  ---")
+        
         # Base query: get all participants with videos from competitions that are currently active
         queryset = Participant.objects.filter(
             competition__isnull=False,  # Has a competition
@@ -1422,24 +1445,46 @@ class ActiveCompetitionVideosAPIView(APIView):
             video__isnull=False  # Has a video
         ).exclude(video="")  # Video field is not empty
         
+        print(f"DEBUG: Found {queryset.count()} participants matching active competition criteria")
+
+
+        
         # Filter by paid participants if requested
         if paid_only:
+            queryset_before_paid_filter = queryset.count()
             queryset = queryset.filter(is_paid=True)
+            print(f"DEBUG: After paid_only filter: {queryset_before_paid_filter} -> {queryset.count()} participants")
+        
+        # Log individual participants found
+        print(f"DEBUG: Participants found after all filters:")
+        for participant in queryset[:10]:  # Show first 10 for debugging
+            print(f"  - Participant ID {participant.id}: User '{participant.user.user.username}', Competition '{participant.competition.name}', Paid: {participant.is_paid}")
+            print(f"    Competition Dates: {participant.competition.start_date} to {participant.competition.end_date}")
+        
+        if queryset.count() > 10:
+            print(f"  ... and {queryset.count() - 10} more participants")
         
         # Apply ordering
         if shuffle:
             queryset = queryset.order_by('?')  # Random order
+            print("DEBUG: Applied random ordering")
         else:
             queryset = queryset.order_by('-id')  # Latest first
+            print("DEBUG: Applied latest-first ordering")
         
         # Get count of unique active competitions
         active_competitions = queryset.values_list('competition_id', flat=True).distinct()
         active_competitions_count = len(set(active_competitions))
         
+        print(f"DEBUG: Active competition IDs: {list(set(active_competitions))}")
         print(f"DEBUG ActiveCompetitionVideosAPIView: Found {queryset.count()} videos from {active_competitions_count} active competitions")
         
         # Serialize the data
         serializer = ParticipantSerializer(queryset, many=True, context={'user_id': request.user.id})
+        
+        print(f"DEBUG: Serializer produced {len(serializer.data)} video items")
+        print(f"DEBUG: Response will include {queryset.count()} videos from {active_competitions_count} competitions")
+        print("DEBUG: ==================== END DEBUG INFO ====================")
         
         return Response({
             'count': queryset.count(),
